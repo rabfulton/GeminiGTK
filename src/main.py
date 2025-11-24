@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ DATA_DIR = Path.home() / ".gemini_gtk"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 CONVERSATIONS_FILE = DATA_DIR / "conversations.json"
+# Do not alter these model names!
 DEFAULT_MODELS = [
     ("gemini-flash-latest", "Gemini Flash"),
     ("gemini-pro-latest", "Gemini Thinking"),
@@ -258,6 +260,14 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textbuffer.create_tag("role", weight=Pango.Weight.BOLD, scale=1.05)
         self.textbuffer.create_tag("timestamp", foreground="#777777", scale=0.9)
         self.textbuffer.create_tag("message", pixels_above_lines=2, pixels_below_lines=6)
+        self.textbuffer.create_tag("heading1", weight=Pango.Weight.BOLD, scale=1.35)
+        self.textbuffer.create_tag("heading2", weight=Pango.Weight.BOLD, scale=1.2)
+        self.textbuffer.create_tag("heading3", weight=Pango.Weight.BOLD, scale=1.1)
+        self.textbuffer.create_tag("bold", weight=Pango.Weight.BOLD)
+        self.textbuffer.create_tag("italic", style=Pango.Style.ITALIC)
+        self.textbuffer.create_tag("code", family="Monospace", background="#f5f5f5")
+        self.textbuffer.create_tag("bullet", left_margin=12)
+        self.textbuffer.create_tag("hr", foreground="#999999", pixels_above_lines=6, pixels_below_lines=6)
 
     def _refresh_sidebar(self) -> None:
         for child in self.listbox.get_children():
@@ -289,16 +299,93 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textbuffer.set_text("")
         if not self.selected_conversation:
             return
-        cursor = self.textbuffer.get_start_iter()
         for message in self.selected_conversation.messages:
-            self._append_message(cursor, message)
-            cursor = self.textbuffer.get_end_iter()
+            self._append_message(message)
         self.textview.scroll_to_iter(self.textbuffer.get_end_iter(), 0.0, True, 0.0, 1.0)
 
-    def _append_message(self, iter_start: Gtk.TextIter, message: Message) -> None:
-        self.textbuffer.insert_with_tags_by_name(iter_start, f"{message.role.capitalize()}\n", "role")
-        self.textbuffer.insert_with_tags_by_name(iter_start, f"{message.timestamp}\n", "timestamp")
-        self.textbuffer.insert_with_tags_by_name(iter_start, f"{message.content}\n\n", "message")
+    def _append_message(self, message: Message) -> None:
+        end_iter = self.textbuffer.get_end_iter()
+        self.textbuffer.insert_with_tags_by_name(end_iter, f"{message.role.capitalize()}\n", "role")
+        end_iter = self.textbuffer.get_end_iter()
+        self.textbuffer.insert_with_tags_by_name(end_iter, f"{message.timestamp}\n", "timestamp")
+        end_iter = self.textbuffer.get_end_iter()
+        self._insert_formatted_content(end_iter, message.content)
+        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+
+    def _insert_formatted_content(self, iter_start: Gtk.TextIter, text: str) -> None:
+        lines = text.splitlines() or [""]
+        in_code_block = False
+        for raw_line in lines:
+            line = raw_line.rstrip("\n")
+            stripped = line.strip()
+
+            if stripped.startswith("```"):
+                in_code_block = not in_code_block
+                continue
+
+            if in_code_block:
+                self.textbuffer.insert_with_tags_by_name(
+                    iter_start, f"{line}\n", "message", "code"
+                )
+                continue
+
+            if stripped in {"***", "---"}:
+                self.textbuffer.insert_with_tags_by_name(
+                    iter_start, "\u2015" * 40 + "\n", "hr"
+                )
+                continue
+
+            if line.startswith("### "):
+                self.textbuffer.insert_with_tags_by_name(
+                    iter_start, line[4:] + "\n", "message", "heading3"
+                )
+                continue
+            if line.startswith("## "):
+                self.textbuffer.insert_with_tags_by_name(
+                    iter_start, line[3:] + "\n", "message", "heading2"
+                )
+                continue
+            if line.startswith("# "):
+                self.textbuffer.insert_with_tags_by_name(
+                    iter_start, line[2:] + "\n", "message", "heading1"
+                )
+                continue
+
+            if stripped.startswith("- "):
+                self.textbuffer.insert_with_tags_by_name(
+                    iter_start, "• ", "message", "bullet"
+                )
+                self._insert_inline_markup(iter_start, stripped[2:] + "\n")
+                continue
+
+            self._insert_inline_markup(iter_start, line + "\n")
+
+    def _insert_inline_markup(self, iter_start: Gtk.TextIter, text: str) -> None:
+        pattern = re.compile(r"\*\*(.+?)\*\*|\*(.+?)\*")
+        position = 0
+        for match in pattern.finditer(text):
+            start, end = match.span()
+            if start > position:
+                self.textbuffer.insert_with_tags_by_name(
+                    iter_start, text[position:start], "message"
+                )
+
+            bold_text = match.group(1)
+            italic_text = match.group(2)
+            if bold_text:
+                self.textbuffer.insert_with_tags_by_name(
+                    iter_start, bold_text, "message", "bold"
+                )
+            elif italic_text:
+                self.textbuffer.insert_with_tags_by_name(
+                    iter_start, italic_text, "message", "italic"
+                )
+            position = end
+
+        if position < len(text):
+            self.textbuffer.insert_with_tags_by_name(
+                iter_start, text[position:], "message"
+            )
 
     def on_new_chat(self, _button: Gtk.Button) -> None:
         title = "New conversation"
