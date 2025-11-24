@@ -1,14 +1,18 @@
 import json
+import os
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import gi
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk, Pango
+
+from google import genai
 
 
 DATA_DIR = Path.home() / ".gemini_gtk"
@@ -99,6 +103,63 @@ class ConversationStore:
         return None
 
 
+class ModelClient:
+    def __init__(self) -> None:
+        self.client = None
+        self.configuration_error: Optional[str] = None
+
+        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
+        if not api_key:
+            self.configuration_error = (
+                "Set GEMINI_API_KEY or GOOGLE_GENAI_API_KEY to enable real model calls."
+            )
+            return
+
+        self.client = genai.Client(api_key=api_key)
+
+    def generate_reply(self, conversation: Conversation) -> Tuple[bool, str]:
+        if not self.client:
+            return False, self.configuration_error or "API client is not configured."
+
+        contents = [
+            {"role": message.role, "parts": [message.content]}
+            for message in conversation.messages
+            if message.content
+        ]
+        if not contents:
+            return False, "Conversation has no messages to send."
+
+        try:
+            response = self.client.models.generate_content(
+                model=conversation.model,
+                contents=contents,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return False, f"API error: {exc}"
+
+        text = getattr(response, "text", "") or self._extract_candidate_text(response)
+        if not text:
+            return False, "Received empty response from the model."
+        return True, text.strip()
+
+    @staticmethod
+    def _extract_candidate_text(response: object) -> str:
+        candidates = getattr(response, "candidates", None)
+        if not candidates:
+            return ""
+
+        for candidate in candidates:
+            content = getattr(candidate, "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            if not parts:
+                continue
+            for part in parts:
+                text = getattr(part, "text", "")
+                if text:
+                    return text
+        return ""
+
+
 class ChatWindow(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application, store: ConversationStore):
         super().__init__(application=app)
@@ -107,6 +168,7 @@ class ChatWindow(Gtk.ApplicationWindow):
 
         self.store = store
         self.selected_conversation: Optional[Conversation] = None
+        self.model_client = ModelClient()
 
         root_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.add(root_box)
@@ -275,15 +337,26 @@ class ChatWindow(Gtk.ApplicationWindow):
         self._render_conversation()
         self.entry.set_text("")
 
-        GLib.idle_add(self._respond_async, self.selected_conversation.id)
+        conversation_id = self.selected_conversation.id
+        threading.Thread(
+            target=self._respond_in_thread, args=(conversation_id,), daemon=True
+        ).start()
 
-    def _respond_async(self, conversation_id: str) -> bool:
+    def _respond_in_thread(self, conversation_id: str) -> None:
+        convo = self.store.get(conversation_id)
+        if not convo:
+            return
+
+        success, reply_content = self.model_client.generate_reply(convo)
+        GLib.idle_add(self._apply_response, conversation_id, success, reply_content)
+
+    def _apply_response(self, conversation_id: str, success: bool, reply: str) -> bool:
         convo = self.store.get(conversation_id)
         if not convo:
             return False
 
-        reply_content = self._fake_model_response(convo)
-        assistant_msg = Message(role="assistant", content=reply_content)
+        content = reply if success else f"(Model error) {reply}"
+        assistant_msg = Message(role="assistant", content=content)
         convo.messages.append(assistant_msg)
 
         if convo.title == "New conversation" and convo.messages:
@@ -296,16 +369,6 @@ class ChatWindow(Gtk.ApplicationWindow):
             self._refresh_sidebar()
             self._render_conversation()
         return False
-
-    def _fake_model_response(self, conversation: Conversation) -> str:
-        last_user_message = next((m for m in reversed(conversation.messages) if m.role == "user"), None)
-        snippet = last_user_message.content[:120] if last_user_message else ""
-        return (
-            f"[Model: {conversation.model}]\n"
-            "Thanks for your message! Here's a quick summary: "
-            f"{snippet}\n\n"
-            "(Replace this stub with a real Gemini or Nano Banana API call.)"
-        )
 
 
 class GeminiApplication(Gtk.Application):

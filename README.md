@@ -7,7 +7,7 @@ Native GTK+ 3 desktop client for exploring Gemini and Nano Banana models.
 - Conversation sidebar with create/delete controls and persistent history stored on disk (`~/.gemini_gtk/conversations.json`).
 - Main chat view that formats role, timestamp, and message content for readability.
 - Bottom input bar with model selector, text entry, and send button.
-- Stubbed model replies that make it easy to wire in real Gemini / Nano Banana API calls later.
+- Real-time calls to Gemini / Nano Banana models via the official `google-genai` SDK with graceful error feedback.
 
 ## Running locally
 
@@ -17,7 +17,19 @@ Native GTK+ 3 desktop client for exploring Gemini and Nano Banana models.
    sudo apt-get update && sudo apt-get install -y python3-gi gir1.2-gtk-3.0 python3-gi-cairo
    ```
 
-2. Launch the application:
+2. Install the Gemini SDK:
+
+   ```bash
+   pip install google-genai
+   ```
+
+3. Export your API key (either `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` is accepted):
+
+   ```bash
+   export GEMINI_API_KEY="your-key-here"
+   ```
+
+4. Launch the application:
 
    ```bash
    python3 src/main.py
@@ -25,6 +37,7 @@ Native GTK+ 3 desktop client for exploring Gemini and Nano Banana models.
 
 The first run will create the `~/.gemini_gtk` directory for storing conversations.
 
-## Wiring up real model calls
+## Notes
 
-`src/main.py` currently returns a placeholder response. Replace `_fake_model_response` with calls to your Gemini / Nano Banana SDK or REST API client, and store the returned text in `assistant_msg.content`.
+- Set `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` to authenticate requests. The UI will surface a readable error message if the key is missing or invalid.
+- Model options are listed in `DEFAULT_MODELS` inside `src/main.py` and can be adjusted to any model ID supported by your account (e.g., `gemini-1.5-flash`).
