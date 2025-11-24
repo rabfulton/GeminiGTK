@@ -127,7 +127,7 @@ class ModelClient:
         contents = [
             types.Content(
                 role="user" if message.role == "user" else "model",
-                parts=[types.Part.from_text(message.content)],
+                parts=[types.Part(text=message.content)],
             )
             for message in conversation.messages
             if message.content
