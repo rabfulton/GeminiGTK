@@ -259,7 +259,7 @@ class ChatWindow(Gtk.ApplicationWindow):
 
         for convo in self.store.conversations:
             row = Gtk.ListBoxRow()
-            row.set_data("conversation_id", convo.id)
+            row.conversation_id = convo.id
             label = Gtk.Label(label=convo.title, xalign=0)
             label.set_line_wrap(True)
             label.set_max_width_chars(30)
@@ -275,7 +275,7 @@ class ChatWindow(Gtk.ApplicationWindow):
 
     def _select_row_by_id(self, conversation_id: str) -> None:
         for row in self.listbox.get_children():
-            if row.get_data("conversation_id") == conversation_id:
+            if getattr(row, "conversation_id", None) == conversation_id:
                 self.listbox.select_row(row)
                 break
 
@@ -316,7 +316,7 @@ class ChatWindow(Gtk.ApplicationWindow):
     def on_conversation_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
         if not row:
             return
-        convo_id = row.get_data("conversation_id")
+        convo_id = getattr(row, "conversation_id", None)
         convo = self.store.get(convo_id)
         if convo:
             self.selected_conversation = convo
