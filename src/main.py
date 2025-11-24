@@ -13,6 +13,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk, Pango
 
 from google import genai
+from google.genai import types
 
 
 DATA_DIR = Path.home() / ".gemini_gtk"
@@ -124,7 +125,10 @@ class ModelClient:
             return False, self.configuration_error or "API client is not configured."
 
         contents = [
-            {"role": message.role, "parts": [message.content]}
+            types.Content(
+                role="user" if message.role == "user" else "model",
+                parts=[types.Part.from_text(message.content)],
+            )
             for message in conversation.messages
             if message.content
         ]
