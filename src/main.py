@@ -17,7 +17,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version('GdkPixbuf', '2.0')
 gi.require_version('Gdk', '3.0')
-from gi.repository import GLib, Gdk, GdkPixbuf, Gtk, Pango
+gi.require_version('GtkSource', '3.0')
+from gi.repository import GLib, Gdk, GdkPixbuf, Gtk, GtkSource, Pango
 
 from google import genai
 from google.genai import types
@@ -534,18 +535,24 @@ class ChatWindow(Gtk.ApplicationWindow):
     def _insert_formatted_content(self, text: str, message_tag: str) -> None:
         lines = text.splitlines() or [""]
         in_code_block = False
+        code_lines: List[str] = []
+        code_language: Optional[str] = None
         for raw_line in lines:
             line = raw_line.rstrip("\n")
             stripped = line.strip()
 
             if stripped.startswith("```"):
+                if in_code_block:
+                    self._insert_code_block("\n".join(code_lines), code_language)
+                    code_lines = []
+                    code_language = None
+                else:
+                    code_language = stripped[3:].strip() or None
                 in_code_block = not in_code_block
                 continue
 
             if in_code_block:
-                self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), f"{line}\n", message_tag, "code"
-                )
+                code_lines.append(line)
                 continue
 
             if stripped in {"***", "---"}:
@@ -579,6 +586,44 @@ class ChatWindow(Gtk.ApplicationWindow):
                 continue
 
             self._insert_inline_markup(line + "\n", message_tag)
+
+        if in_code_block and code_lines:
+            self._insert_code_block("\n".join(code_lines), code_language)
+
+    def _insert_code_block(self, code: str, language_hint: Optional[str]) -> None:
+        buffer = GtkSource.Buffer()
+        buffer.set_text(code)
+
+        language_manager = GtkSource.LanguageManager.get_default()
+        language = None
+        if language_hint:
+            language = language_manager.get_language(language_hint)
+            if not language:
+                language = language_manager.guess_language(f"file.{language_hint}", None)
+        if not language:
+            language = language_manager.guess_language(None, None)
+        if language:
+            buffer.set_language(language)
+        buffer.set_highlight_syntax(True)
+
+        source_view = GtkSource.View.new_with_buffer(buffer)
+        source_view.set_editable(False)
+        source_view.set_cursor_visible(False)
+        source_view.set_wrap_mode(Gtk.WrapMode.NONE)
+        source_view.set_monospace(True)
+        source_view.set_left_margin(8)
+        source_view.set_right_margin(8)
+
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_min_content_height(80)
+        scrolled.add(source_view)
+        scrolled.show_all()
+
+        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+        anchor = self.textbuffer.create_child_anchor(self.textbuffer.get_end_iter())
+        self.textview.add_child_at_anchor(scrolled, anchor)
+        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
 
     def _insert_inline_markup(self, text: str, message_tag: str) -> None:
         text = self._strip_emphasis_from_math(text)
