@@ -311,6 +311,7 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.selected_conversation: Optional[Conversation] = None
         self.model_client = ModelClient()
         self._mathtext = None
+        self._font_manager = None
 
         self._restore_window_geometry()
         self.connect("delete-event", self._on_window_delete_event)
@@ -637,12 +638,24 @@ class ChatWindow(Gtk.ApplicationWindow):
 
     def _render_latex_pixbuf(self, formula: str) -> Optional[GdkPixbuf.Pixbuf]:
         mathtext_module = self._load_mathtext()
-        if not mathtext_module:
+        if not mathtext_module or not self._font_manager:
             return None
 
         buffer = BytesIO()
         try:
-            mathtext_module.math_to_image(f"${formula}$", buffer, dpi=160, format="png")
+            font_size = getattr(self.settings, "font_size", 12)
+            tex_font = self._font_manager.FontProperties(
+                size=font_size, family="serif", math_fontfamily="cm"
+            )
+            screen = self.get_screen()
+            dpi = screen.get_resolution() if screen else 96.0
+            if not dpi or dpi <= 0:
+                dpi = 96.0
+            scale_factor = getattr(self, "get_scale_factor", lambda: 1)() or 1
+            effective_dpi = dpi * max(1, scale_factor)
+            mathtext_module.math_to_image(
+                f"${formula}$", buffer, prop=tex_font, dpi=effective_dpi, format="png"
+            )
         except Exception:  # noqa: BLE001
             return None
 
@@ -662,10 +675,13 @@ class ChatWindow(Gtk.ApplicationWindow):
 
         import matplotlib
 
+        matplotlib.rcParams['savefig.transparent'] = True
+        matplotlib.rcParams['text.color'] = self.settings.assistant_color
         matplotlib.use("Agg")
-        from matplotlib import mathtext
+        from matplotlib import mathtext, font_manager
 
         self._mathtext = mathtext
+        self._font_manager = font_manager
         return self._mathtext
 
     def _color_to_hex(self, color: Gdk.RGBA) -> str:
