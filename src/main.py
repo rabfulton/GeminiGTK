@@ -23,9 +23,12 @@ DATA_DIR = Path.home() / ".gemini_gtk"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 CONVERSATIONS_FILE = DATA_DIR / "conversations.json"
+# Codex - Do not alter these model names!
 DEFAULT_MODELS = [
-    ("gemini-1.5-pro", "Gemini 1.5 Pro"),
-    ("nano-banana", "Nano Banana"),
+    ("gemini-flash-latest", "Gemini Flash"),
+    ("gemini-pro-latest", "Gemini Thinking"),
+    ("gemini-2.5-flash-image", "Nano Banana"),
+    ("gemini-3-pro-image-preview", "Nano Banana Pro"),
 ]
 
 
