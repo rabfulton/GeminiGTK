@@ -570,58 +570,58 @@ class ChatWindow(Gtk.ApplicationWindow):
                 )
                 continue
 
-            if stripped.startswith("- "):
+            bullet_match = re.match(r"^([-*])\s+(.*)", stripped)
+            if bullet_match:
                 self.textbuffer.insert_with_tags_by_name(
                     self.textbuffer.get_end_iter(), "• ", message_tag, "bullet"
                 )
-                self._insert_inline_markup(stripped[2:] + "\n", message_tag)
+                self._insert_inline_markup(bullet_match.group(2) + "\n", message_tag)
                 continue
 
             self._insert_inline_markup(line + "\n", message_tag)
 
     def _insert_inline_markup(self, text: str, message_tag: str) -> None:
+        text = self._strip_emphasis_from_math(text)
+        emphasis_pattern = re.compile(r"\*\*(.+?)\*\*|\*(.+?)\*")
+        position = 0
+        for match in emphasis_pattern.finditer(text):
+            if match.start() > position:
+                self._insert_text_with_math(text[position:match.start()], [message_tag])
+
+            content = match.group(1) or match.group(2)
+            tags = [message_tag, "bold" if match.group(1) else "italic"]
+            self._insert_text_with_math(content, tags)
+            position = match.end()
+
+        if position < len(text):
+            self._insert_text_with_math(text[position:], [message_tag])
+
+    def _strip_emphasis_from_math(self, text: str) -> str:
+        pattern = re.compile(r"(\*\*|\*)(\${1,2})(.+?)\2\1")
+        return pattern.sub(lambda match: f"{match.group(2)}{match.group(3)}{match.group(2)}", text)
+
+    def _insert_text_with_math(self, text: str, tags: List[str]) -> None:
         pattern = re.compile(r"(\${1,2})(.+?)\1")
         position = 0
         for match in pattern.finditer(text):
             start, end = match.span()
             if start > position:
-                self._insert_basic_markup(text[position:start], message_tag)
+                self.textbuffer.insert_with_tags_by_name(
+                    self.textbuffer.get_end_iter(), text[position:start], *tags
+                )
 
             formula = match.group(2).strip()
             is_block = len(match.group(1)) == 2
             inserted = self._insert_latex(formula, is_block)
             if not inserted:
-                self._insert_basic_markup(match.group(0), message_tag)
-            position = end
-
-        if position < len(text):
-            self._insert_basic_markup(text[position:], message_tag)
-
-    def _insert_basic_markup(self, text: str, message_tag: str) -> None:
-        pattern = re.compile(r"\*\*(.+?)\*\*|\*(.+?)\*")
-        position = 0
-        for match in pattern.finditer(text):
-            start, end = match.span()
-            if start > position:
                 self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), text[position:start], message_tag
-                )
-
-            bold_text = match.group(1)
-            italic_text = match.group(2)
-            if bold_text:
-                self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), bold_text, message_tag, "bold"
-                )
-            elif italic_text:
-                self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), italic_text, message_tag, "italic"
+                    self.textbuffer.get_end_iter(), match.group(0), *tags
                 )
             position = end
 
         if position < len(text):
             self.textbuffer.insert_with_tags_by_name(
-                self.textbuffer.get_end_iter(), text[position:], message_tag
+                self.textbuffer.get_end_iter(), text[position:], *tags
             )
 
     def _insert_latex(self, formula: str, block: bool) -> bool:
