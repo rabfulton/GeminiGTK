@@ -617,16 +617,20 @@ class ChatWindow(Gtk.ApplicationWindow):
         line_count = max(1, code.count("\n") + 1)
         layout = source_view.create_pango_layout("M")
         _, line_height = layout.get_pixel_size()
-        min_height = 140
-        max_height = 420
-        desired_height = min(max(line_height * line_count + 12, min_height), max_height)
+        desired_height = line_height * line_count + 12
+
+        source_view.set_size_request(-1, desired_height)
+        source_view.set_hexpand(True)
+        source_view.set_halign(Gtk.Align.FILL)
 
         scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+        scrolled.set_propagate_natural_width(False)
+        scrolled.set_propagate_natural_height(True)
         scrolled.set_min_content_height(desired_height)
-        scrolled.set_min_content_width(500)
         scrolled.set_size_request(-1, desired_height)
         scrolled.set_hexpand(True)
+        scrolled.set_halign(Gtk.Align.FILL)
         scrolled.add(source_view)
         scrolled.show_all()
 
