@@ -601,7 +601,7 @@ class ChatWindow(Gtk.ApplicationWindow):
             if not language:
                 language = language_manager.guess_language(f"file.{language_hint}", None)
         if not language:
-            language = language_manager.guess_language(None, None)
+            language = language_manager.guess_language(None, "text/plain")
         if language:
             buffer.set_language(language)
         buffer.set_highlight_syntax(True)
@@ -617,7 +617,7 @@ class ChatWindow(Gtk.ApplicationWindow):
         line_count = max(1, code.count("\n") + 1)
         layout = source_view.create_pango_layout("M")
         _, line_height = layout.get_pixel_size()
-        desired_height = line_height * line_count + 12
+        desired_height = line_height * line_count + 16
 
         source_view.set_size_request(-1, desired_height)
         source_view.set_hexpand(True)
@@ -625,12 +625,15 @@ class ChatWindow(Gtk.ApplicationWindow):
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
-        scrolled.set_propagate_natural_width(False)
+        scrolled.set_propagate_natural_width(True)
         scrolled.set_propagate_natural_height(True)
         scrolled.set_min_content_height(desired_height)
         scrolled.set_size_request(-1, desired_height)
         scrolled.set_hexpand(True)
         scrolled.set_halign(Gtk.Align.FILL)
+        textview_width = self.textview.get_allocated_width()
+        min_width = textview_width if textview_width > 0 else 600
+        scrolled.set_min_content_width(min_width)
         scrolled.add(source_view)
         scrolled.show_all()
 
