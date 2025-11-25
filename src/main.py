@@ -63,6 +63,10 @@ class Settings:
     assistant_color: str = "#1b5e20"
     user_name: str = "User"
     assistant_name: str = "Assistant"
+    window_width: int = 900
+    window_height: int = 600
+    window_x: Optional[int] = None
+    window_y: Optional[int] = None
 
 
 class SettingsStore:
@@ -86,6 +90,10 @@ class SettingsStore:
             assistant_color=data.get("assistant_color", self.settings.assistant_color),
             user_name=data.get("user_name", self.settings.user_name),
             assistant_name=data.get("assistant_name", self.settings.assistant_name),
+            window_width=int(data.get("window_width", self.settings.window_width)),
+            window_height=int(data.get("window_height", self.settings.window_height)),
+            window_x=data.get("window_x", self.settings.window_x),
+            window_y=data.get("window_y", self.settings.window_y),
         )
 
     def save(self) -> None:
@@ -95,6 +103,10 @@ class SettingsStore:
             "assistant_color": self.settings.assistant_color,
             "user_name": self.settings.user_name,
             "assistant_name": self.settings.assistant_name,
+            "window_width": self.settings.window_width,
+            "window_height": self.settings.window_height,
+            "window_x": self.settings.window_x,
+            "window_y": self.settings.window_y,
         }
         with self.path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -291,7 +303,6 @@ class ModelClient:
 class ChatWindow(Gtk.ApplicationWindow):
     def __init__(self, app: Gtk.Application, store: ConversationStore, settings_store: SettingsStore):
         super().__init__(application=app)
-        self.set_default_size(900, 600)
         self.set_title("Gemini GTK")
 
         self.store = store
@@ -300,6 +311,9 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.selected_conversation: Optional[Conversation] = None
         self.model_client = ModelClient()
         self._mathtext = None
+
+        self._restore_window_geometry()
+        self.connect("delete-event", self._on_window_delete_event)
 
         root_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.add(root_box)
@@ -318,6 +332,31 @@ class ChatWindow(Gtk.ApplicationWindow):
 
         if self.store.conversations:
             self._select_conversation(self.store.conversations[0])
+
+    def _restore_window_geometry(self) -> None:
+        """Resize/move the window using the last stored geometry."""
+        width = max(400, int(getattr(self.settings, "window_width", 900) or 900))
+        height = max(300, int(getattr(self.settings, "window_height", 600) or 600))
+        self.resize(width, height)
+        if (
+            getattr(self.settings, "window_x", None) is not None
+            and getattr(self.settings, "window_y", None) is not None
+        ):
+            self.move(int(self.settings.window_x), int(self.settings.window_y))
+
+    def _persist_window_geometry(self) -> None:
+        """Capture the current window geometry and save it to disk."""
+        width, height = self.get_size()
+        self.settings.window_width = width
+        self.settings.window_height = height
+        x, y = self.get_position()
+        self.settings.window_x = x
+        self.settings.window_y = y
+        self.settings_store.save()
+
+    def _on_window_delete_event(self, *_args) -> bool:
+        self._persist_window_geometry()
+        return False
 
     def _create_sidebar(self) -> Gtk.Widget:
         frame = Gtk.Frame()
