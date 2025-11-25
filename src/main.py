@@ -205,19 +205,25 @@ class ModelClient:
                     image_path = self._save_inline_image(inline_data)
                     if image_path:
                         images.append(image_path)
-        if text_parts:
-            return "".join(text_parts), images
-        fallback_text = getattr(response, "text", "")
-        return fallback_text or "", images
+        return "".join(text_parts), images
 
     def _save_inline_image(self, inline_data: object) -> Optional[str]:
-        data = getattr(inline_data, "data", None)
-        if not data:
+        raw_data = getattr(inline_data, "data", None)
+        if raw_data is None:
             return None
 
-        try:
-            image_bytes = base64.b64decode(data)
-        except Exception:  # noqa: BLE001
+        image_bytes: Optional[bytes] = None
+        if isinstance(raw_data, (bytes, bytearray, memoryview)):
+            image_bytes = bytes(raw_data)
+        elif isinstance(raw_data, str):
+            try:
+                image_bytes = base64.b64decode(raw_data, validate=True)
+            except Exception:  # noqa: BLE001
+                return None
+        else:
+            return None
+
+        if not image_bytes:
             return None
 
         mime_type = getattr(inline_data, "mime_type", "image/png")
