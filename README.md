@@ -18,10 +18,10 @@ Native GTK+ 3 desktop client for exploring Gemini and Nano Banana models.
    sudo apt-get update && sudo apt-get install -y python3-gi gir1.2-gtk-3.0 python3-gi-cairo
    ```
 
-2. Install the Gemini SDK (for real model calls) and optional math renderer:
+2. Install the Gemini SDK:
 
    ```bash
-   pip install google-genai matplotlib
+   pip install google-genai
    ```
 
 3. Export your API key (either `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` is accepted):
@@ -40,7 +40,6 @@ The first run will create the `~/.gemini_gtk` directory for storing conversation
 
 ## Notes
 
-- Install `google-genai` to enable live requests; if it is missing, the app will still start but will display a configuration error instead of calling the API.
 - Set `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` to authenticate requests. The UI will surface a readable error message if the key is missing or invalid.
 - Model options are listed in `DEFAULT_MODELS` inside `src/main.py` and can be adjusted to any model ID supported by your account (e.g., `gemini-1.5-flash`).
 - The message view supports basic Markdown-inspired formatting:

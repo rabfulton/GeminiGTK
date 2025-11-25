@@ -14,16 +14,24 @@ from typing import List, Optional, Tuple
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version('GdkPixbuf', '2.0')
 from gi.repository import GLib, GdkPixbuf, Gtk, Pango
+from gi.repository import GLib, Gtk, Pango
+
+from google import genai
+from google.genai import types
 
 
 DATA_DIR = Path.home() / ".gemini_gtk"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 CONVERSATIONS_FILE = DATA_DIR / "conversations.json"
+# Do not alter these model names!
 DEFAULT_MODELS = [
-    ("gemini-1.5-pro", "Gemini 1.5 Pro"),
-    ("nano-banana", "Nano Banana"),
+    ("gemini-flash-latest", "Gemini Flash"),
+    ("gemini-pro-latest", "Gemini Thinking"),
+    ("gemini-2.5-flash-image", "Nano Banana"),
+    ("gemini-3-pro-image-preview", "Nano Banana Pro"),
 ]
 
 
