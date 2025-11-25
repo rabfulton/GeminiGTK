@@ -570,16 +570,18 @@ class ChatWindow(Gtk.ApplicationWindow):
                 )
                 continue
 
-            if stripped.startswith("- "):
+            bullet_match = re.match(r"^([-*])\s+(.*)", stripped)
+            if bullet_match:
                 self.textbuffer.insert_with_tags_by_name(
                     self.textbuffer.get_end_iter(), "• ", message_tag, "bullet"
                 )
-                self._insert_inline_markup(stripped[2:] + "\n", message_tag)
+                self._insert_inline_markup(bullet_match.group(2) + "\n", message_tag)
                 continue
 
             self._insert_inline_markup(line + "\n", message_tag)
 
     def _insert_inline_markup(self, text: str, message_tag: str) -> None:
+        text = self._strip_emphasis_from_math(text)
         pattern = re.compile(r"(\${1,2})(.+?)\1")
         position = 0
         for match in pattern.finditer(text):
@@ -596,6 +598,10 @@ class ChatWindow(Gtk.ApplicationWindow):
 
         if position < len(text):
             self._insert_basic_markup(text[position:], message_tag)
+
+    def _strip_emphasis_from_math(self, text: str) -> str:
+        pattern = re.compile(r"(\*\*|\*)(\${1,2})(.+?)\2\1")
+        return pattern.sub(lambda match: f"{match.group(2)}{match.group(3)}{match.group(2)}", text)
 
     def _insert_basic_markup(self, text: str, message_tag: str) -> None:
         pattern = re.compile(r"\*\*(.+?)\*\*|\*(.+?)\*")
