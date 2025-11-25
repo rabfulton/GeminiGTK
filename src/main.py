@@ -1,3 +1,4 @@
+import base64
 import importlib
 import importlib.util
 import json
@@ -25,6 +26,9 @@ from google.genai import types
 DATA_DIR = Path.home() / ".gemini_gtk"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+IMAGES_DIR = DATA_DIR / "images"
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
 CONVERSATIONS_FILE = DATA_DIR / "conversations.json"
 # Do not alter these model names!
 DEFAULT_MODELS = [
@@ -39,6 +43,7 @@ DEFAULT_MODELS = [
 class Message:
     role: str
     content: str
+    images: List[str] = field(default_factory=list)
     timestamp: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
 
 
@@ -72,9 +77,16 @@ class ConversationStore:
                 title=item.get("title", "Untitled"),
                 model=item.get("model", DEFAULT_MODELS[0][0]),
                 messages=[
-                    Message(**msg)
+                    Message(
+                        role=msg.get("role", ""),
+                        content=msg.get("content", ""),
+                        images=msg.get("images", []),
+                        timestamp=msg.get(
+                            "timestamp", datetime.now().isoformat(timespec="seconds")
+                        ),
+                    )
                     for msg in item.get("messages", [])
-                    if msg.get("content")
+                    if msg.get("content") or msg.get("images")
                 ],
             )
             for item in data
@@ -87,7 +99,12 @@ class ConversationStore:
                 "title": c.title,
                 "model": c.model,
                 "messages": [
-                    {"role": m.role, "content": m.content, "timestamp": m.timestamp}
+                    {
+                        "role": m.role,
+                        "content": m.content,
+                        "images": m.images,
+                        "timestamp": m.timestamp,
+                    }
                     for m in c.messages
                 ],
             }
@@ -138,9 +155,9 @@ class ModelClient:
         self.client = genai.Client(api_key=api_key)
         self.types = types
 
-    def generate_reply(self, conversation: Conversation) -> Tuple[bool, str]:
+    def generate_reply(self, conversation: Conversation) -> Tuple[bool, str, List[str]]:
         if not self.client or not self.types:
-            return False, self.configuration_error or "API client is not configured."
+            return False, self.configuration_error or "API client is not configured.", []
 
         contents = [
             self.types.Content(
@@ -151,7 +168,7 @@ class ModelClient:
             if message.content
         ]
         if not contents:
-            return False, "Conversation has no messages to send."
+            return False, "Conversation has no messages to send.", []
 
         try:
             response = self.client.models.generate_content(
@@ -159,18 +176,20 @@ class ModelClient:
                 contents=contents,
             )
         except Exception as exc:  # noqa: BLE001
-            return False, f"API error: {exc}"
+            return False, f"API error: {exc}", []
 
-        text = getattr(response, "text", "") or self._extract_candidate_text(response)
-        if not text:
-            return False, "Received empty response from the model."
-        return True, text.strip()
+        text, images = self._extract_candidate_parts(response)
+        if not text and not images:
+            return False, "Received empty response from the model.", []
+        return True, text.strip(), images
 
-    @staticmethod
-    def _extract_candidate_text(response: object) -> str:
+    def _extract_candidate_parts(self, response: object) -> Tuple[str, List[str]]:
         candidates = getattr(response, "candidates", None)
         if not candidates:
-            return ""
+            return "", []
+
+        text_parts: List[str] = []
+        images: List[str] = []
 
         for candidate in candidates:
             content = getattr(candidate, "content", None)
@@ -180,8 +199,48 @@ class ModelClient:
             for part in parts:
                 text = getattr(part, "text", "")
                 if text:
-                    return text
-        return ""
+                    text_parts.append(text)
+                inline_data = getattr(part, "inline_data", None)
+                if inline_data:
+                    image_path = self._save_inline_image(inline_data)
+                    if image_path:
+                        images.append(image_path)
+        return "".join(text_parts), images
+
+    def _save_inline_image(self, inline_data: object) -> Optional[str]:
+        raw_data = getattr(inline_data, "data", None)
+        if raw_data is None:
+            return None
+
+        image_bytes: Optional[bytes] = None
+        if isinstance(raw_data, (bytes, bytearray, memoryview)):
+            image_bytes = bytes(raw_data)
+        elif isinstance(raw_data, str):
+            try:
+                image_bytes = base64.b64decode(raw_data, validate=True)
+            except Exception:  # noqa: BLE001
+                return None
+        else:
+            return None
+
+        if not image_bytes:
+            return None
+
+        mime_type = getattr(inline_data, "mime_type", "image/png")
+        extension = ".png"
+        if mime_type == "image/jpeg":
+            extension = ".jpg"
+        elif mime_type == "image/webp":
+            extension = ".webp"
+
+        filename = IMAGES_DIR / f"{uuid.uuid4()}{extension}"
+        try:
+            with filename.open("wb") as f:
+                f.write(image_bytes)
+        except OSError:
+            return None
+
+        return str(filename)
 
 
 class ChatWindow(Gtk.ApplicationWindow):
@@ -328,7 +387,25 @@ class ChatWindow(Gtk.ApplicationWindow):
             self.textbuffer.get_end_iter(), f"{message.timestamp}\n", "timestamp"
         )
         self._insert_formatted_content(message.content)
+        self._insert_images(getattr(message, "images", []))
         self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+
+    def _insert_images(self, images: List[str]) -> None:
+        for image_path in images:
+            if not image_path:
+                continue
+            try:
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file(image_path)
+            except Exception:  # noqa: BLE001
+                continue
+
+            width = pixbuf.get_width()
+            if width > 500:
+                scaled_height = int(pixbuf.get_height() * (500 / width))
+                pixbuf = pixbuf.scale_simple(500, scaled_height, GdkPixbuf.InterpType.BILINEAR)
+
+            self.textbuffer.insert_pixbuf(self.textbuffer.get_end_iter(), pixbuf)
+            self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
 
     def _insert_formatted_content(self, text: str) -> None:
         lines = text.splitlines() or [""]
@@ -521,16 +598,20 @@ class ChatWindow(Gtk.ApplicationWindow):
         if not convo:
             return
 
-        success, reply_content = self.model_client.generate_reply(convo)
-        GLib.idle_add(self._apply_response, conversation_id, success, reply_content)
+        success, reply_content, images = self.model_client.generate_reply(convo)
+        GLib.idle_add(
+            self._apply_response, conversation_id, success, reply_content, images
+        )
 
-    def _apply_response(self, conversation_id: str, success: bool, reply: str) -> bool:
+    def _apply_response(
+        self, conversation_id: str, success: bool, reply: str, images: List[str]
+    ) -> bool:
         convo = self.store.get(conversation_id)
         if not convo:
             return False
 
         content = reply if success else f"(Model error) {reply}"
-        assistant_msg = Message(role="assistant", content=content)
+        assistant_msg = Message(role="assistant", content=content, images=images)
         convo.messages.append(assistant_msg)
 
         if convo.title == "New conversation" and convo.messages:
