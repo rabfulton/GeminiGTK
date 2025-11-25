@@ -620,23 +620,28 @@ class ChatWindow(Gtk.ApplicationWindow):
         if not mathtext_module:
             return None
 
-        color = self._message_color_for_tag(message_tag)
-        wrapped_formula = f"\\color{{{color}}}{{{formula}}}"
+        wrapped_formula = self._wrap_formula_with_color(formula, message_tag)
         font_props = mathtext_module.FontProperties(
             size=self.settings.font_size,
             weight="bold" if weight == Pango.Weight.BOLD else "normal",
             style="italic" if style == Pango.Style.ITALIC else "normal",
         )
         buffer = BytesIO()
-        try:
-            mathtext_module.math_to_image(
-                f"${wrapped_formula}$",
-                buffer,
-                dpi=160,
-                format="png",
-                prop=font_props,
-            )
-        except Exception:  # noqa: BLE001
+        for expr in (wrapped_formula, formula):
+            try:
+                mathtext_module.math_to_image(
+                    f"${expr}$",
+                    buffer,
+                    dpi=160,
+                    format="png",
+                    prop=font_props,
+                )
+            except Exception:  # noqa: BLE001
+                buffer.seek(0)
+                buffer.truncate()
+                continue
+            break
+        else:
             return None
 
         loader = GdkPixbuf.PixbufLoader.new_with_type("png")
@@ -650,6 +655,15 @@ class ChatWindow(Gtk.ApplicationWindow):
         if tag_name.startswith("assistant"):
             return self.settings.assistant_color
         return "#000000"
+
+    def _wrap_formula_with_color(self, formula: str, message_tag: str) -> str:
+        rgba = Gdk.RGBA()
+        if not rgba.parse(self._message_color_for_tag(message_tag)):
+            return formula
+
+        r, g, b = rgba.red, rgba.green, rgba.blue
+        rgb_spec = f"{r:.3f},{g:.3f},{b:.3f}"
+        return f"\\color[rgb]{{{rgb_spec}}}{{{formula}}}"
 
     def _load_mathtext(self):
         if self._mathtext is False:
