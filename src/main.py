@@ -540,16 +540,22 @@ class ChatWindow(Gtk.ApplicationWindow):
             self._insert_inline_markup(line + "\n", message_tag)
 
     def _insert_inline_markup(self, text: str, message_tag: str) -> None:
-        pattern = re.compile(r"(\${1,2})(.+?)\1")
+        pattern = re.compile(
+            r"(?P<em>\*{1,2})?(?P<delim>\${1,2})(?P<formula>.+?)(?P=delim)(?P=em)?"
+        )
         position = 0
         for match in pattern.finditer(text):
             start, end = match.span()
             if start > position:
                 self._insert_basic_markup(text[position:start], message_tag)
 
-            formula = match.group(2).strip()
-            is_block = len(match.group(1)) == 2
-            inserted = self._insert_latex(formula, is_block)
+            formula = match.group("formula").strip()
+            is_block = len(match.group("delim")) == 2
+            emphasis = match.group("em") or ""
+            weight = Pango.Weight.BOLD if len(emphasis) == 2 else Pango.Weight.NORMAL
+            style = Pango.Style.ITALIC if len(emphasis) == 1 else Pango.Style.NORMAL
+
+            inserted = self._insert_latex(formula, is_block, weight, style, message_tag)
             if not inserted:
                 self._insert_basic_markup(match.group(0), message_tag)
             position = end
@@ -584,8 +590,15 @@ class ChatWindow(Gtk.ApplicationWindow):
                 self.textbuffer.get_end_iter(), text[position:], message_tag
             )
 
-    def _insert_latex(self, formula: str, block: bool) -> bool:
-        pixbuf = self._render_latex_pixbuf(formula)
+    def _insert_latex(
+        self,
+        formula: str,
+        block: bool,
+        weight: Pango.Weight,
+        style: Pango.Style,
+        message_tag: str,
+    ) -> bool:
+        pixbuf = self._render_latex_pixbuf(formula, weight, style, message_tag)
         if not pixbuf:
             return False
 
@@ -596,14 +609,33 @@ class ChatWindow(Gtk.ApplicationWindow):
             self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
         return True
 
-    def _render_latex_pixbuf(self, formula: str) -> Optional[GdkPixbuf.Pixbuf]:
+    def _render_latex_pixbuf(
+        self,
+        formula: str,
+        weight: Pango.Weight,
+        style: Pango.Style,
+        message_tag: str,
+    ) -> Optional[GdkPixbuf.Pixbuf]:
         mathtext_module = self._load_mathtext()
         if not mathtext_module:
             return None
 
+        color = self._message_color_for_tag(message_tag)
+        wrapped_formula = f"\\color{{{color}}}{{{formula}}}"
+        font_props = mathtext_module.FontProperties(
+            size=self.settings.font_size,
+            weight="bold" if weight == Pango.Weight.BOLD else "normal",
+            style="italic" if style == Pango.Style.ITALIC else "normal",
+        )
         buffer = BytesIO()
         try:
-            mathtext_module.math_to_image(f"${formula}$", buffer, dpi=160, format="png")
+            mathtext_module.math_to_image(
+                f"${wrapped_formula}$",
+                buffer,
+                dpi=160,
+                format="png",
+                prop=font_props,
+            )
         except Exception:  # noqa: BLE001
             return None
 
@@ -611,6 +643,13 @@ class ChatWindow(Gtk.ApplicationWindow):
         loader.write(buffer.getvalue())
         loader.close()
         return loader.get_pixbuf()
+
+    def _message_color_for_tag(self, tag_name: str) -> str:
+        if tag_name.startswith("user"):
+            return self.settings.user_color
+        if tag_name.startswith("assistant"):
+            return self.settings.assistant_color
+        return "#000000"
 
     def _load_mathtext(self):
         if self._mathtext is False:
