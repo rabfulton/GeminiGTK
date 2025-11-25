@@ -530,11 +530,12 @@ class ChatWindow(Gtk.ApplicationWindow):
                 )
                 continue
 
-            if stripped.startswith("- "):
+            if re.match(r"^[-*]\s+", stripped):
                 self.textbuffer.insert_with_tags_by_name(
                     self.textbuffer.get_end_iter(), "• ", message_tag, "bullet"
                 )
-                self._insert_inline_markup(stripped[2:] + "\n", message_tag)
+                bullet_text = re.sub(r"^[-*]\s+", "", stripped, count=1)
+                self._insert_inline_markup(bullet_text + "\n", message_tag)
                 continue
 
             self._insert_inline_markup(line + "\n", message_tag)
@@ -564,7 +565,9 @@ class ChatWindow(Gtk.ApplicationWindow):
             self._insert_basic_markup(text[position:], message_tag)
 
     def _insert_basic_markup(self, text: str, message_tag: str) -> None:
-        pattern = re.compile(r"\*\*(.+?)\*\*|\*(.+?)\*")
+        pattern = re.compile(
+            r"\*\*(?P<bold>[^\s*](?:.*?[^\s*])?)\*\*|\*(?P<italic>[^\s*](?:.*?[^\s*])?)\*"
+        )
         position = 0
         for match in pattern.finditer(text):
             start, end = match.span()
@@ -573,8 +576,8 @@ class ChatWindow(Gtk.ApplicationWindow):
                     self.textbuffer.get_end_iter(), text[position:start], message_tag
                 )
 
-            bold_text = match.group(1)
-            italic_text = match.group(2)
+            bold_text = match.group("bold")
+            italic_text = match.group("italic")
             if bold_text:
                 self.textbuffer.insert_with_tags_by_name(
                     self.textbuffer.get_end_iter(), bold_text, message_tag, "bold"
@@ -620,14 +623,17 @@ class ChatWindow(Gtk.ApplicationWindow):
         if not mathtext_module:
             return None
 
-        wrapped_formula = self._wrap_formula_with_color(formula, message_tag)
+        color = self._message_color_for_tag(message_tag)
         font_props = mathtext_module.FontProperties(
             size=self.settings.font_size,
             weight="bold" if weight == Pango.Weight.BOLD else "normal",
             style="italic" if style == Pango.Style.ITALIC else "normal",
         )
         buffer = BytesIO()
-        for expr in (wrapped_formula, formula):
+        for expr, color_value in (
+            (formula, color),
+            (formula, None),
+        ):
             try:
                 mathtext_module.math_to_image(
                     f"${expr}$",
@@ -635,6 +641,8 @@ class ChatWindow(Gtk.ApplicationWindow):
                     dpi=160,
                     format="png",
                     prop=font_props,
+                    color=color_value or "black",
+                    transparent=True,
                 )
             except Exception:  # noqa: BLE001
                 buffer.seek(0)
@@ -655,15 +663,6 @@ class ChatWindow(Gtk.ApplicationWindow):
         if tag_name.startswith("assistant"):
             return self.settings.assistant_color
         return "#000000"
-
-    def _wrap_formula_with_color(self, formula: str, message_tag: str) -> str:
-        rgba = Gdk.RGBA()
-        if not rgba.parse(self._message_color_for_tag(message_tag)):
-            return formula
-
-        r, g, b = rgba.red, rgba.green, rgba.blue
-        rgb_spec = f"{r:.3f},{g:.3f},{b:.3f}"
-        return f"\\color[rgb]{{{rgb_spec}}}{{{formula}}}"
 
     def _load_mathtext(self):
         if self._mathtext is False:
