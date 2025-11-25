@@ -1,3 +1,5 @@
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -5,12 +7,15 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 import gi
 
 gi.require_version("Gtk", "3.0")
+gi.require_version('GdkPixbuf', '2.0')
+from gi.repository import GLib, GdkPixbuf, Gtk, Pango
 from gi.repository import GLib, Gtk, Pango
 
 from google import genai
@@ -111,6 +116,7 @@ class ConversationStore:
 class ModelClient:
     def __init__(self) -> None:
         self.client = None
+        self.types = None
         self.configuration_error: Optional[str] = None
 
         api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
@@ -120,16 +126,26 @@ class ModelClient:
             )
             return
 
+        if importlib.util.find_spec("google.genai") is None:
+            self.configuration_error = (
+                "Install google-genai to enable real model calls: pip install google-genai"
+            )
+            return
+
+        genai = importlib.import_module("google.genai")
+        types = importlib.import_module("google.genai.types")
+
         self.client = genai.Client(api_key=api_key)
+        self.types = types
 
     def generate_reply(self, conversation: Conversation) -> Tuple[bool, str]:
-        if not self.client:
+        if not self.client or not self.types:
             return False, self.configuration_error or "API client is not configured."
 
         contents = [
-            types.Content(
+            self.types.Content(
                 role="user" if message.role == "user" else "model",
-                parts=[types.Part(text=message.content)],
+                parts=[self.types.Part(text=message.content)],
             )
             for message in conversation.messages
             if message.content
@@ -177,6 +193,7 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.store = store
         self.selected_conversation: Optional[Conversation] = None
         self.model_client = ModelClient()
+        self._mathtext = None
 
         root_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.add(root_box)
@@ -304,15 +321,16 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textview.scroll_to_iter(self.textbuffer.get_end_iter(), 0.0, True, 0.0, 1.0)
 
     def _append_message(self, message: Message) -> None:
-        end_iter = self.textbuffer.get_end_iter()
-        self.textbuffer.insert_with_tags_by_name(end_iter, f"{message.role.capitalize()}\n", "role")
-        end_iter = self.textbuffer.get_end_iter()
-        self.textbuffer.insert_with_tags_by_name(end_iter, f"{message.timestamp}\n", "timestamp")
-        end_iter = self.textbuffer.get_end_iter()
-        self._insert_formatted_content(end_iter, message.content)
+        self.textbuffer.insert_with_tags_by_name(
+            self.textbuffer.get_end_iter(), f"{message.role.capitalize()}\n", "role"
+        )
+        self.textbuffer.insert_with_tags_by_name(
+            self.textbuffer.get_end_iter(), f"{message.timestamp}\n", "timestamp"
+        )
+        self._insert_formatted_content(message.content)
         self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
 
-    def _insert_formatted_content(self, iter_start: Gtk.TextIter, text: str) -> None:
+    def _insert_formatted_content(self, text: str) -> None:
         lines = text.splitlines() or [""]
         in_code_block = False
         for raw_line in lines:
@@ -325,67 +343,130 @@ class ChatWindow(Gtk.ApplicationWindow):
 
             if in_code_block:
                 self.textbuffer.insert_with_tags_by_name(
-                    iter_start, f"{line}\n", "message", "code"
+                    self.textbuffer.get_end_iter(), f"{line}\n", "message", "code"
                 )
                 continue
 
             if stripped in {"***", "---"}:
                 self.textbuffer.insert_with_tags_by_name(
-                    iter_start, "\u2015" * 40 + "\n", "hr"
+                    self.textbuffer.get_end_iter(), "\u2015" * 40 + "\n", "hr"
                 )
                 continue
 
             if line.startswith("### "):
                 self.textbuffer.insert_with_tags_by_name(
-                    iter_start, line[4:] + "\n", "message", "heading3"
+                    self.textbuffer.get_end_iter(), line[4:] + "\n", "message", "heading3"
                 )
                 continue
             if line.startswith("## "):
                 self.textbuffer.insert_with_tags_by_name(
-                    iter_start, line[3:] + "\n", "message", "heading2"
+                    self.textbuffer.get_end_iter(), line[3:] + "\n", "message", "heading2"
                 )
                 continue
             if line.startswith("# "):
                 self.textbuffer.insert_with_tags_by_name(
-                    iter_start, line[2:] + "\n", "message", "heading1"
+                    self.textbuffer.get_end_iter(), line[2:] + "\n", "message", "heading1"
                 )
                 continue
 
             if stripped.startswith("- "):
                 self.textbuffer.insert_with_tags_by_name(
-                    iter_start, "• ", "message", "bullet"
+                    self.textbuffer.get_end_iter(), "• ", "message", "bullet"
                 )
-                self._insert_inline_markup(iter_start, stripped[2:] + "\n")
+                self._insert_inline_markup(stripped[2:] + "\n")
                 continue
 
-            self._insert_inline_markup(iter_start, line + "\n")
+            self._insert_inline_markup(line + "\n")
 
-    def _insert_inline_markup(self, iter_start: Gtk.TextIter, text: str) -> None:
+    def _insert_inline_markup(self, text: str) -> None:
+        pattern = re.compile(r"(\${1,2})(.+?)\1")
+        position = 0
+        for match in pattern.finditer(text):
+            start, end = match.span()
+            if start > position:
+                self._insert_basic_markup(text[position:start])
+
+            formula = match.group(2).strip()
+            is_block = len(match.group(1)) == 2
+            inserted = self._insert_latex(formula, is_block)
+            if not inserted:
+                self._insert_basic_markup(match.group(0))
+            position = end
+
+        if position < len(text):
+            self._insert_basic_markup(text[position:])
+
+    def _insert_basic_markup(self, text: str) -> None:
         pattern = re.compile(r"\*\*(.+?)\*\*|\*(.+?)\*")
         position = 0
         for match in pattern.finditer(text):
             start, end = match.span()
             if start > position:
                 self.textbuffer.insert_with_tags_by_name(
-                    iter_start, text[position:start], "message"
+                    self.textbuffer.get_end_iter(), text[position:start], "message"
                 )
 
             bold_text = match.group(1)
             italic_text = match.group(2)
             if bold_text:
                 self.textbuffer.insert_with_tags_by_name(
-                    iter_start, bold_text, "message", "bold"
+                    self.textbuffer.get_end_iter(), bold_text, "message", "bold"
                 )
             elif italic_text:
                 self.textbuffer.insert_with_tags_by_name(
-                    iter_start, italic_text, "message", "italic"
+                    self.textbuffer.get_end_iter(), italic_text, "message", "italic"
                 )
             position = end
 
         if position < len(text):
             self.textbuffer.insert_with_tags_by_name(
-                iter_start, text[position:], "message"
+                self.textbuffer.get_end_iter(), text[position:], "message"
             )
+
+    def _insert_latex(self, formula: str, block: bool) -> bool:
+        pixbuf = self._render_latex_pixbuf(formula)
+        if not pixbuf:
+            return False
+
+        if block:
+            self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+        self.textbuffer.insert_pixbuf(self.textbuffer.get_end_iter(), pixbuf)
+        if block:
+            self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+        return True
+
+    def _render_latex_pixbuf(self, formula: str) -> Optional[GdkPixbuf.Pixbuf]:
+        mathtext_module = self._load_mathtext()
+        if not mathtext_module:
+            return None
+
+        buffer = BytesIO()
+        try:
+            mathtext_module.math_to_image(f"${formula}$", buffer, dpi=160, format="png")
+        except Exception:  # noqa: BLE001
+            return None
+
+        loader = GdkPixbuf.PixbufLoader.new_with_type("png")
+        loader.write(buffer.getvalue())
+        loader.close()
+        return loader.get_pixbuf()
+
+    def _load_mathtext(self):
+        if self._mathtext is False:
+            return None
+        if self._mathtext:
+            return self._mathtext
+        if importlib.util.find_spec("matplotlib") is None:
+            self._mathtext = False
+            return None
+
+        import matplotlib
+
+        matplotlib.use("Agg")
+        from matplotlib import mathtext
+
+        self._mathtext = mathtext
+        return self._mathtext
 
     def on_new_chat(self, _button: Gtk.Button) -> None:
         title = "New conversation"

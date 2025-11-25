@@ -8,7 +8,7 @@ Native GTK+ 3 desktop client for exploring Gemini and Nano Banana models.
 - Main chat view that formats role, timestamp, and message content for readability.
 - Bottom input bar with model selector, text entry, and send button.
 - Real-time calls to Gemini / Nano Banana models via the official `google-genai` SDK with graceful error feedback.
-- Lightweight Markdown-style rendering for model responses (headings, bold/italic, lists, code fences, and horizontal rules).
+- Lightweight Markdown-style rendering for model responses (headings, bold/italic, lists, code fences, and horizontal rules), plus LaTeX math rendering to inline images when `matplotlib` is available.
 
 ## Running locally
 
@@ -48,3 +48,4 @@ The first run will create the `~/.gemini_gtk` directory for storing conversation
   - Bold/italic via `**text**` and `*text*`
   - Code fences using triple backticks
   - Horizontal rules using `---` or `***`
+- Inline LaTeX enclosed in `$...$` or block math with `$$...$$` is rendered to images when `matplotlib` is installed; otherwise the raw text is shown.
