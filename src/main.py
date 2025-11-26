@@ -473,6 +473,7 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textview.get_style_context().add_class("chat-textview")
         self._ensure_textview_css()
         self._apply_textview_margins()
+        self.textview.connect("size-allocate", self._on_textview_size_allocate)
 
         self._register_tags()
         scrolled.add(self.textview)
@@ -559,6 +560,7 @@ class ChatWindow(Gtk.ApplicationWindow):
         right = self.textview.get_right_margin()
         top = self.textview.get_top_margin()
         bottom = self.textview.get_bottom_margin()
+        content_width = max(0, self.textview.get_allocated_width() - (left + right))
 
         for child in self.textview.get_children():
             if isinstance(child, Gtk.ScrolledWindow):
@@ -566,6 +568,11 @@ class ChatWindow(Gtk.ApplicationWindow):
                 child.set_margin_end(right)
                 child.set_margin_top(top)
                 child.set_margin_bottom(bottom)
+                if content_width:
+                    child.set_min_content_width(content_width)
+
+    def _on_textview_size_allocate(self, *_args) -> None:
+        self._apply_margins_to_embedded_widgets()
 
     def _update_textview_font(self) -> None:
         if not self._textview_css_provider:
