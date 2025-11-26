@@ -469,13 +469,10 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textview = Gtk.TextView()
         self.textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         self.textview.set_editable(False)
-        self.textview.set_left_margin(12)
-        self.textview.set_right_margin(12)
-        self.textview.set_top_margin(8)
-        self.textview.set_bottom_margin(8)
         self.textbuffer = self.textview.get_buffer()
         self.textview.get_style_context().add_class("chat-textview")
         self._ensure_textview_css()
+        self._apply_textview_margins()
 
         self._register_tags()
         scrolled.add(self.textview)
@@ -529,6 +526,7 @@ class ChatWindow(Gtk.ApplicationWindow):
 
     def _apply_settings(self) -> None:
         self._ensure_textview_css()
+        self._apply_textview_margins()
         self._update_textview_font()
 
         tag_table = self.textbuffer.get_tag_table()
@@ -543,13 +541,17 @@ class ChatWindow(Gtk.ApplicationWindow):
                 tag.set_property("foreground", color)
 
     def _ensure_textview_css(self) -> None:
-        if self._textview_css_provider:
-            return
-        provider = Gtk.CssProvider()
-        self._textview_css_provider = provider
+        if not self._textview_css_provider:
+            self._textview_css_provider = Gtk.CssProvider()
         context = self.textview.get_style_context()
-        context.add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        context.add_provider(self._textview_css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
         self._update_textview_font()
+
+    def _apply_textview_margins(self) -> None:
+        self.textview.set_left_margin(12)
+        self.textview.set_right_margin(12)
+        self.textview.set_top_margin(8)
+        self.textview.set_bottom_margin(8)
 
     def _update_textview_font(self) -> None:
         if not self._textview_css_provider:
@@ -588,6 +590,7 @@ class ChatWindow(Gtk.ApplicationWindow):
                 break
 
     def _render_conversation(self) -> None:
+        self._apply_textview_margins()
         self.textbuffer.set_text("")
         if not self.selected_conversation:
             return
