@@ -623,7 +623,7 @@ class ChatWindow(Gtk.ApplicationWindow):
 
     def _select_conversation(self, convo: Conversation) -> None:
         self.selected_conversation = convo
-        self._render_conversation()
+        self._render_conversation(reset_scroll=True)
         self._select_row_by_id(convo.id)
 
     def _select_row_by_id(self, conversation_id: str) -> None:
@@ -632,7 +632,14 @@ class ChatWindow(Gtk.ApplicationWindow):
                 self.listbox.select_row(row)
                 break
 
-    def _render_conversation(self) -> None:
+    def _render_conversation(self, reset_scroll: bool = False) -> None:
+        previous_scroll: Optional[float] = None
+        scroller = getattr(self, "message_scroller", None)
+        if scroller and not reset_scroll:
+            vadj = scroller.get_vadjustment()
+            if vadj:
+                previous_scroll = vadj.get_value()
+
         self._apply_textview_margins()
         for child in list(self.textview.get_children()):
             self.textview.remove(child)
@@ -642,7 +649,12 @@ class ChatWindow(Gtk.ApplicationWindow):
         for message in self.selected_conversation.messages:
             self._append_message(message)
         self._apply_margins_to_embedded_widgets()
-        self.textview.scroll_to_iter(self.textbuffer.get_end_iter(), 0.0, True, 0.0, 1.0)
+        if reset_scroll:
+            self._reset_chat_scroll()
+        elif previous_scroll is not None:
+            self._restore_scroll_position(previous_scroll)
+        else:
+            self.textview.scroll_to_iter(self.textbuffer.get_end_iter(), 0.0, True, 0.0, 1.0)
 
     def _reset_chat_scroll(self) -> None:
         """Reset the chat scroll position to the top of the conversation."""
@@ -653,6 +665,23 @@ class ChatWindow(Gtk.ApplicationWindow):
         if not vadj:
             return
         vadj.set_value(vadj.get_lower())
+
+    def _restore_scroll_position(self, value: float) -> None:
+        """Restore the chat scroll position, clamping within valid bounds."""
+
+        def _apply_scroll() -> bool:
+            scroller = getattr(self, "message_scroller", None)
+            if not scroller:
+                return False
+            vadj = scroller.get_vadjustment()
+            if not vadj:
+                return False
+            lower = vadj.get_lower()
+            upper = vadj.get_upper() - vadj.get_page_size()
+            vadj.set_value(min(max(value, lower), upper))
+            return False
+
+        GLib.idle_add(_apply_scroll)
 
     def _append_message(self, message: Message) -> None:
         display_name = (
@@ -1345,10 +1374,9 @@ class ChatWindow(Gtk.ApplicationWindow):
         convo = self.store.get(convo_id)
         if convo:
             self.selected_conversation = convo
-            self._render_conversation()
             # When switching conversations via the sidebar, reset scroll so the
             # user always starts at the top of the selected chat.
-            self._reset_chat_scroll()
+            self._render_conversation(reset_scroll=True)
 
     def on_attach_image(self, _button: Gtk.Button) -> None:
         dialog = Gtk.FileChooserDialog(
