@@ -543,6 +543,11 @@ class ChatWindow(Gtk.ApplicationWindow):
             if tag:
                 tag.set_property("foreground", color)
 
+        # Also update the sidebar so conversation titles reflect the new font
+        # size when settings change.
+        if hasattr(self, "listbox"):
+            self._refresh_sidebar()
+
     def _ensure_textview_css(self) -> None:
         if not self._textview_css_provider:
             self._textview_css_provider = Gtk.CssProvider()
@@ -587,6 +592,10 @@ class ChatWindow(Gtk.ApplicationWindow):
             pass
 
     def _refresh_sidebar(self) -> None:
+        # Preserve the currently selected conversation (if any) so we can
+        # re-select it after rebuilding the sidebar.
+        selected_id = getattr(self.selected_conversation, "id", None)
+
         for child in self.listbox.get_children():
             self.listbox.remove(child)
 
@@ -597,9 +606,20 @@ class ChatWindow(Gtk.ApplicationWindow):
             label.set_line_wrap(True)
             label.set_max_width_chars(30)
             label.set_ellipsize(Pango.EllipsizeMode.END)
+
+            # Make the sidebar respect the configured font size from settings.
+            font_size = max(8, getattr(self.settings, "font_size", 12))
+            desc = Pango.FontDescription()
+            desc.set_size(font_size * Pango.SCALE)
+            label.modify_font(desc)
+
             row.add(label)
             self.listbox.add(row)
+
         self.listbox.show_all()
+
+        if selected_id:
+            self._select_row_by_id(selected_id)
 
     def _select_conversation(self, convo: Conversation) -> None:
         self.selected_conversation = convo
