@@ -10,9 +10,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, TYPE_CHECKING
 
 import gi
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 gi.require_version("Gtk", "3.0")
 gi.require_version('GdkPixbuf', '2.0')
@@ -68,6 +71,8 @@ class Settings:
     window_height: int = 600
     window_x: Optional[int] = None
     window_y: Optional[int] = None
+    image_resolution: str = "2K"  # Default to 2K for Gemini 3
+    image_aspect_ratio: str = "1:1"
 
 
 class SettingsStore:
@@ -95,6 +100,8 @@ class SettingsStore:
             window_height=int(data.get("window_height", self.settings.window_height)),
             window_x=data.get("window_x", self.settings.window_x),
             window_y=data.get("window_y", self.settings.window_y),
+            image_resolution=data.get("image_resolution", self.settings.image_resolution),
+            image_aspect_ratio=data.get("image_aspect_ratio", self.settings.image_aspect_ratio),
         )
 
     def save(self) -> None:
@@ -108,6 +115,8 @@ class SettingsStore:
             "window_height": self.settings.window_height,
             "window_x": self.settings.window_x,
             "window_y": self.settings.window_y,
+            "image_resolution": self.settings.image_resolution,
+            "image_aspect_ratio": self.settings.image_aspect_ratio,
         }
         with self.path.open("w", encoding="utf-8") as f:
             json.dump(payload, f, indent=2)
@@ -189,9 +198,10 @@ class ConversationStore:
 
 
 class ModelClient:
-    def __init__(self) -> None:
+    def __init__(self, settings: Settings) -> None:
         self.client = None
         self.types = None
+        self.settings = settings
         self.configuration_error: Optional[str] = None
 
         api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_GENAI_API_KEY")
@@ -217,21 +227,65 @@ class ModelClient:
         if not self.client or not self.types:
             return False, self.configuration_error or "API client is not configured.", []
 
-        contents = [
-            self.types.Content(
-                role="user" if message.role == "user" else "model",
-                parts=[self.types.Part(text=message.content)],
-            )
-            for message in conversation.messages
-            if message.content
-        ]
+        contents = []
+        for message in conversation.messages:
+            if message.content or message.images:
+                parts = []
+                if message.content:
+                    parts.append(self.types.Part(text=message.content))
+
+                # Handle user-provided images
+                for image_path in message.images:
+                    if image_path and os.path.exists(image_path):
+                        try:
+                            from PIL import Image
+                            pil_image = Image.open(image_path)
+                            # Convert to RGB if necessary
+                            if pil_image.mode not in ('RGB', 'RGBA'):
+                                pil_image = pil_image.convert('RGB')
+                            parts.append(self.types.Part(inline_data=self._image_to_inline_data(pil_image)))
+                        except Exception as exc:  # noqa: BLE001
+                            # If image loading fails, continue without it
+                            continue
+
+                if parts:
+                    contents.append(self.types.Content(
+                        role="user" if message.role == "user" else "model",
+                        parts=parts,
+                    ))
+
         if not contents:
             return False, "Conversation has no messages to send.", []
+
+        # Set generation config for image models
+        config = None
+        is_image_model = conversation.model in ["gemini-2.5-flash-image", "gemini-3-pro-image-preview"]
+        if is_image_model:
+            # Handle different models with their supported resolutions
+            if conversation.model == "gemini-2.5-flash-image":
+                # Gemini 2.5 Flash Image only supports 1K resolution
+                image_size = "1K"
+                aspect_ratio = self.settings.image_aspect_ratio
+            else:
+                # Gemini 3 Pro Image Preview supports 1K, 2K, and 4K resolutions
+                image_size = self.settings.image_resolution  # "1K", "2K", or "4K"
+                aspect_ratio = self.settings.image_aspect_ratio
+
+            image_config = self.types.ImageConfig(
+                aspect_ratio=aspect_ratio,
+                image_size=image_size
+            )
+
+            config = self.types.GenerateContentConfig(
+                response_modalities=["TEXT", "IMAGE"],
+                image_config=image_config
+            )
 
         try:
             response = self.client.models.generate_content(
                 model=conversation.model,
                 contents=contents,
+                config=config,
             )
         except Exception as exc:  # noqa: BLE001
             return False, f"API error: {exc}", []
@@ -264,6 +318,19 @@ class ModelClient:
                     if image_path:
                         images.append(image_path)
         return "".join(text_parts), images
+
+    def _image_to_inline_data(self, pil_image: "Image") -> object:
+        """Convert a PIL Image to inline data format for the API."""
+        from io import BytesIO
+
+        buffer = BytesIO()
+        pil_image.save(buffer, format="PNG")
+        image_bytes = buffer.getvalue()
+
+        return self.types.Blob(
+            mime_type="image/png",
+            data=image_bytes,
+        )
 
     def _save_inline_image(self, inline_data: object) -> Optional[str]:
         raw_data = getattr(inline_data, "data", None)
@@ -310,9 +377,10 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.settings_store = settings_store
         self.settings = settings_store.settings
         self.selected_conversation: Optional[Conversation] = None
-        self.model_client = ModelClient()
+        self.model_client = ModelClient(self.settings)
         self._mathtext = None
         self._font_manager = None
+        self.pending_images: List[str] = []
 
         self._restore_window_geometry()
         self.connect("delete-event", self._on_window_delete_event)
@@ -416,6 +484,15 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.entry.set_placeholder_text("Ask Gemini or Nano Banana...")
         self.entry.connect("activate", self.on_send)
         box.pack_start(self.entry, True, True, 0)
+
+        self.image_count_label = Gtk.Label()
+        self.image_count_label.hide()
+        box.pack_start(self.image_count_label, False, False, 0)
+
+        image_button = Gtk.Button(label="📎")
+        image_button.set_tooltip_text("Attach image")
+        image_button.connect("clicked", self.on_attach_image)
+        box.pack_start(image_button, False, False, 0)
 
         send_button = Gtk.Button(label="Send")
         send_button.connect("clicked", self.on_send)
@@ -794,6 +871,29 @@ class ChatWindow(Gtk.ApplicationWindow):
         grid.attach(assistant_name_label, 0, 4, 1, 1)
         grid.attach(assistant_name_entry, 1, 4, 1, 1)
 
+        image_resolution_label = Gtk.Label(label="Image resolution", xalign=0)
+        image_resolution_combo = Gtk.ComboBoxText()
+        for resolution in ["1K", "2K", "4K"]:
+            image_resolution_combo.append_text(resolution)
+        try:
+            image_resolution_combo.set_active(["1K", "2K", "4K"].index(self.settings.image_resolution))
+        except ValueError:
+            image_resolution_combo.set_active(1)  # Default to 2K
+        grid.attach(image_resolution_label, 0, 5, 1, 1)
+        grid.attach(image_resolution_combo, 1, 5, 1, 1)
+
+        image_aspect_ratio_label = Gtk.Label(label="Image aspect ratio", xalign=0)
+        image_aspect_ratio_combo = Gtk.ComboBoxText()
+        aspect_ratios = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
+        for ratio in aspect_ratios:
+            image_aspect_ratio_combo.append_text(ratio)
+        try:
+            image_aspect_ratio_combo.set_active(aspect_ratios.index(self.settings.image_aspect_ratio))
+        except ValueError:
+            image_aspect_ratio_combo.set_active(0)  # Default to 1:1
+        grid.attach(image_aspect_ratio_label, 0, 6, 1, 1)
+        grid.attach(image_aspect_ratio_combo, 1, 6, 1, 1)
+
         dialog.show_all()
         response = dialog.run()
 
@@ -805,6 +905,8 @@ class ChatWindow(Gtk.ApplicationWindow):
             )
             self.settings.user_name = user_name_entry.get_text() or "User"
             self.settings.assistant_name = assistant_name_entry.get_text() or "Assistant"
+            self.settings.image_resolution = image_resolution_combo.get_active_text() or "2K"
+            self.settings.image_aspect_ratio = image_aspect_ratio_combo.get_active_text() or "1:1"
             self.settings_store.save()
             self._apply_settings()
             self._render_conversation()
@@ -839,6 +941,44 @@ class ChatWindow(Gtk.ApplicationWindow):
             self.selected_conversation = convo
             self._render_conversation()
 
+    def on_attach_image(self, _button: Gtk.Button) -> None:
+        dialog = Gtk.FileChooserDialog(
+            title="Select Image",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN,
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK,
+        )
+
+        # Add image filters
+        filter_images = Gtk.FileFilter()
+        filter_images.set_name("Image files")
+        filter_images.add_mime_type("image/*")
+        dialog.add_filter(filter_images)
+
+        filter_all = Gtk.FileFilter()
+        filter_all.set_name("All files")
+        filter_all.add_pattern("*")
+        dialog.add_filter(filter_all)
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            filename = dialog.get_filename()
+            if filename:
+                self.pending_images.append(filename)
+                self._update_input_bar_display()
+
+        dialog.destroy()
+
+    def _update_input_bar_display(self) -> None:
+        if self.pending_images:
+            self.image_count_label.set_text(f"({len(self.pending_images)} image{'s' if len(self.pending_images) != 1 else ''})")
+            self.image_count_label.show()
+        else:
+            self.image_count_label.hide()
+
     def on_send(self, _widget: Gtk.Widget) -> None:
         text = self.entry.get_text().strip()
         if not text or not self.selected_conversation:
@@ -848,11 +988,13 @@ class ChatWindow(Gtk.ApplicationWindow):
         model_value = DEFAULT_MODELS[model_index][0]
         self.selected_conversation.model = model_value
 
-        user_msg = Message(role="user", content=text)
+        user_msg = Message(role="user", content=text, images=self.pending_images.copy())
         self.selected_conversation.messages.append(user_msg)
         self.store.save()
         self._render_conversation()
         self.entry.set_text("")
+        self.pending_images.clear()
+        self._update_input_bar_display()
 
         conversation_id = self.selected_conversation.id
         threading.Thread(
