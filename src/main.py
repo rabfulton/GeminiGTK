@@ -682,9 +682,7 @@ class ChatWindow(Gtk.ApplicationWindow):
                 continue
 
             if stripped in {"***", "---"}:
-                self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), "\u2015" * 40 + "\n", "hr"
-                )
+                self._insert_horizontal_rule()
                 index += 1
                 continue
 
@@ -993,6 +991,19 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textview.add_child_at_anchor(frame, anchor)
         self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
 
+    def _insert_horizontal_rule(self) -> None:
+        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+
+        available_width = self.textview.get_allocated_width()
+        if available_width <= 0:
+            available_width = max(400, self.get_allocated_width() - 60)
+        width = max(80, available_width - 24)
+
+        pixbuf = self._create_horizontal_rule_pixbuf(width, 1)
+        if pixbuf:
+            self.textbuffer.insert_pixbuf(self.textbuffer.get_end_iter(), pixbuf)
+        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+
     def _create_table_cell_view(
         self,
         text: str,
@@ -1045,6 +1056,33 @@ class ChatWindow(Gtk.ApplicationWindow):
         }
         color = color_map.get(message_tag, self.settings.assistant_color)
         ensure_tag(message_tag, foreground=color)
+
+    def _create_horizontal_rule_pixbuf(self, width: int, height: int) -> Optional[GdkPixbuf.Pixbuf]:
+        width = max(1, int(width))
+        height = max(1, int(height))
+        try:
+            pixbuf = GdkPixbuf.Pixbuf.new(
+                colorspace=GdkPixbuf.Colorspace.RGB,
+                has_alpha=True,
+                bits_per_sample=8,
+                width=width,
+                height=height,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+
+        color = Gdk.RGBA()
+        if not color.parse(self.settings.assistant_color):
+            color.parse("#1b5e20")
+
+        red = min(255, max(0, int(color.red * 255)))
+        green = min(255, max(0, int(color.green * 255)))
+        blue = min(255, max(0, int(color.blue * 255)))
+        alpha = min(255, max(0, int(color.alpha * 255))) or 255
+
+        pixel_value = (red << 24) | (green << 16) | (blue << 8) | alpha
+        pixbuf.fill(pixel_value)
+        return pixbuf
 
     def _render_latex_pixbuf(self, formula: str) -> Optional[GdkPixbuf.Pixbuf]:
         mathtext_module = self._load_mathtext()
