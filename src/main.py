@@ -751,20 +751,29 @@ class ChatWindow(Gtk.ApplicationWindow):
                 continue
 
             if line.startswith("### "):
-                self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), line[4:] + "\n", message_tag, "heading3"
+                # Allow inline markup (e.g. **bold**) inside level 3 headings
+                self._insert_inline_markup(
+                    line[4:] + "\n",
+                    message_tag,
+                    base_tags=[message_tag, "heading3"],
                 )
                 index += 1
                 continue
             if line.startswith("## "):
-                self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), line[3:] + "\n", message_tag, "heading2"
+                # Allow inline markup (e.g. **bold**) inside level 2 headings
+                self._insert_inline_markup(
+                    line[3:] + "\n",
+                    message_tag,
+                    base_tags=[message_tag, "heading2"],
                 )
                 index += 1
                 continue
             if line.startswith("# "):
-                self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), line[2:] + "\n", message_tag, "heading1"
+                # Allow inline markup (e.g. **bold**) inside level 1 headings
+                self._insert_inline_markup(
+                    line[2:] + "\n",
+                    message_tag,
+                    base_tags=[message_tag, "heading1"],
                 )
                 index += 1
                 continue
