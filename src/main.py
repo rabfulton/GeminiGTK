@@ -384,6 +384,7 @@ class ChatWindow(Gtk.ApplicationWindow):
         self._resize_connected = False
         self._resize_idle_id: Optional[int] = None
         self._last_textview_width: Optional[int] = None
+        self._textview_css_provider: Optional[Gtk.CssProvider] = None
 
         self._restore_window_geometry()
         self.connect("delete-event", self._on_window_delete_event)
@@ -469,6 +470,8 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         self.textview.set_editable(False)
         self.textbuffer = self.textview.get_buffer()
+        self.textview.get_style_context().add_class("chat-textview")
+        self._ensure_textview_css()
 
         self._register_tags()
         scrolled.add(self.textview)
@@ -521,9 +524,8 @@ class ChatWindow(Gtk.ApplicationWindow):
         self._apply_settings()
 
     def _apply_settings(self) -> None:
-        font_desc = Pango.FontDescription()
-        font_desc.set_size(self.settings.font_size * Pango.SCALE)
-        self.textview.modify_font(font_desc)
+        self._ensure_textview_css()
+        self._update_textview_font()
 
         tag_table = self.textbuffer.get_tag_table()
         for tag_name, color in (
@@ -535,6 +537,25 @@ class ChatWindow(Gtk.ApplicationWindow):
             tag = tag_table.lookup(tag_name)
             if tag:
                 tag.set_property("foreground", color)
+
+    def _ensure_textview_css(self) -> None:
+        if self._textview_css_provider:
+            return
+        provider = Gtk.CssProvider()
+        self._textview_css_provider = provider
+        context = self.textview.get_style_context()
+        context.add_provider(provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+        self._update_textview_font()
+
+    def _update_textview_font(self) -> None:
+        if not self._textview_css_provider:
+            return
+        font_size = max(8, self.settings.font_size)
+        css = f".chat-textview {{ font-size: {font_size}pt; }}"
+        try:
+            self._textview_css_provider.load_from_data(css.encode("utf-8"))
+        except Exception:  # noqa: BLE001
+            pass
 
     def _refresh_sidebar(self) -> None:
         for child in self.listbox.get_children():
