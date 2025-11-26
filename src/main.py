@@ -520,10 +520,11 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textbuffer.create_tag("heading1", weight=Pango.Weight.BOLD, scale=1.35)
         self.textbuffer.create_tag("heading2", weight=Pango.Weight.BOLD, scale=1.2)
         self.textbuffer.create_tag("heading3", weight=Pango.Weight.BOLD, scale=1.1)
+        self.textbuffer.create_tag("heading4", weight=Pango.Weight.BOLD, scale=1.0)
         self.textbuffer.create_tag("bold", weight=Pango.Weight.BOLD)
         self.textbuffer.create_tag("italic", style=Pango.Style.ITALIC)
         self.textbuffer.create_tag("code", family="Monospace", background="#f5f5f5")
-        self.textbuffer.create_tag("bullet", left_margin=12)
+        self.textbuffer.create_tag("bullet", left_margin=24, indent=-24)
         self.textbuffer.create_tag("hr", foreground="#999999", pixels_above_lines=6, pixels_below_lines=6)
         self._apply_settings()
 
@@ -770,6 +771,15 @@ class ChatWindow(Gtk.ApplicationWindow):
                 index += 1
                 continue
 
+            if line.startswith("#### "):
+                # Allow inline markup (e.g. **bold**) inside level 3 headings
+                self._insert_inline_markup(
+                    line[5:] + "\n",
+                    message_tag,
+                    base_tags=[message_tag, "heading4"],
+                )
+                index += 1
+                continue
             if line.startswith("### "):
                 # Allow inline markup (e.g. **bold**) inside level 3 headings
                 self._insert_inline_markup(
