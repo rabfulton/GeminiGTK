@@ -593,6 +593,11 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
 
     def _insert_images(self, images: List[str]) -> None:
+        # Store image info for potential redraw
+        if not hasattr(self, "_images_to_insert"):
+            self._images_to_insert = []
+        self._images_to_insert = images.copy()  # always latest set
+
         for image_path in images:
             if not image_path:
                 continue
@@ -602,12 +607,29 @@ class ChatWindow(Gtk.ApplicationWindow):
                 continue
 
             width = pixbuf.get_width()
-            if width > 500:
-                scaled_height = int(pixbuf.get_height() * (500 / width))
-                pixbuf = pixbuf.scale_simple(500, scaled_height, GdkPixbuf.InterpType.BILINEAR)
+            textview_width = self.textview.get_allocated_width()
+            max_width = max(100, textview_width - 40) if textview_width > 0 else 500
+            if width > max_width:
+                scaled_height = int(pixbuf.get_height() * (max_width / width))
+                pixbuf = pixbuf.scale_simple(max_width, scaled_height, GdkPixbuf.InterpType.BILINEAR)
 
             self.textbuffer.insert_pixbuf(self.textbuffer.get_end_iter(), pixbuf)
             self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+
+        # Connect to the 'size-allocate' signal to redraw images on resize (once)
+        if not hasattr(self, "_resize_connected"):
+            def on_resize(widget, allocation, self=self):
+                # Remove all images and re-insert them at correct scaling
+                # Save old cursor position
+                insert_iter = self.textbuffer.get_start_iter()
+                text = self.textbuffer.get_text(self.textbuffer.get_start_iter(), self.textbuffer.get_end_iter(), True)
+                # Remove all pixbufs by resetting but preserve text
+                self.textbuffer.set_text("")
+                # Re-render conversation to restore all messages and images at current size
+                # This assumes _render_conversation redraws everything, including images
+                self._render_conversation()
+            self.textview.connect("size-allocate", on_resize)
+            self._resize_connected = True
 
     def _insert_formatted_content(self, text: str, message_tag: str) -> None:
         lines = text.splitlines() or [""]
