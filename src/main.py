@@ -897,21 +897,22 @@ class ChatWindow(Gtk.ApplicationWindow):
             stripped = stripped[:-1]
 
         cells: List[str] = []
-        current = []
-        escaped = False
-        for char in stripped:
-            if escaped:
-                current.append(char)
-                escaped = False
-                continue
-            if char == "\\":
-                escaped = True
+        current: List[str] = []
+        index = 0
+        length = len(stripped)
+        while index < length:
+            char = stripped[index]
+            next_char = stripped[index + 1] if index + 1 < length else ""
+            if char == "\\" and next_char in {"|", "\\"}:
+                current.append(next_char)
+                index += 2
                 continue
             if char == "|":
                 cells.append("".join(current).strip())
                 current = []
             else:
                 current.append(char)
+            index += 1
         cells.append("".join(current).strip())
         return cells
 
