@@ -38,14 +38,13 @@ Native GTK+ 3 desktop client for exploring Gemini and Nano Banana models.
 
 The first run will create the `~/.gemini_gtk` directory for storing conversations.
 
-## Notes
+## Screenshots
 
-- Set `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` to authenticate requests. The UI will surface a readable error message if the key is missing or invalid.
-- Model options are listed in `DEFAULT_MODELS` inside `src/main.py` and can be adjusted to any model ID supported by your account (e.g., `gemini-1.5-flash`).
-- The message view supports basic Markdown-inspired formatting:
-  - Headings via `#`, `##`, or `###` prefixes
-  - Bullet lists using `- `
-  - Bold/italic via `**text**` and `*text*`
-  - Code fences using triple backticks
-  - Horizontal rules using `---` or `***`
-- Inline LaTeX enclosed in `$...$` or block math with `$$...$$` is rendered to images when `matplotlib` is installed; otherwise the raw text is shown.
+*Syntax highlighting*
+![Code Feature](Screenshots/code.jpg)
+
+*Support for Equations*
+![Formulae Feature](Screenshots/equations.jpg)
+
+*Image Generation*
+![Image Generation](Screenshots/images.jpg)
