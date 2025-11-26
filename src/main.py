@@ -652,7 +652,9 @@ class ChatWindow(Gtk.ApplicationWindow):
         in_code_block = False
         code_lines: List[str] = []
         code_language: Optional[str] = None
-        for raw_line in lines:
+        index = 0
+        while index < len(lines):
+            raw_line = lines[index]
             line = raw_line.rstrip("\n")
             stripped = line.strip()
 
@@ -664,32 +666,45 @@ class ChatWindow(Gtk.ApplicationWindow):
                 else:
                     code_language = stripped[3:].strip() or None
                 in_code_block = not in_code_block
+                index += 1
                 continue
 
             if in_code_block:
                 code_lines.append(line)
+                index += 1
+                continue
+
+            table_parse = self._maybe_parse_table(lines, index)
+            if table_parse:
+                rows, aligns, next_index = table_parse
+                self._insert_table(rows, aligns, message_tag)
+                index = next_index
                 continue
 
             if stripped in {"***", "---"}:
                 self.textbuffer.insert_with_tags_by_name(
                     self.textbuffer.get_end_iter(), "\u2015" * 40 + "\n", "hr"
                 )
+                index += 1
                 continue
 
             if line.startswith("### "):
                 self.textbuffer.insert_with_tags_by_name(
                     self.textbuffer.get_end_iter(), line[4:] + "\n", message_tag, "heading3"
                 )
+                index += 1
                 continue
             if line.startswith("## "):
                 self.textbuffer.insert_with_tags_by_name(
                     self.textbuffer.get_end_iter(), line[3:] + "\n", message_tag, "heading2"
                 )
+                index += 1
                 continue
             if line.startswith("# "):
                 self.textbuffer.insert_with_tags_by_name(
                     self.textbuffer.get_end_iter(), line[2:] + "\n", message_tag, "heading1"
                 )
+                index += 1
                 continue
 
             bullet_match = re.match(r"^([-*])\s+(.*)", stripped)
@@ -698,9 +713,11 @@ class ChatWindow(Gtk.ApplicationWindow):
                     self.textbuffer.get_end_iter(), "• ", message_tag, "bullet"
                 )
                 self._insert_inline_markup(bullet_match.group(2) + "\n", message_tag)
+                index += 1
                 continue
 
             self._insert_inline_markup(line + "\n", message_tag)
+            index += 1
 
         if in_code_block and code_lines:
             self._insert_code_block("\n".join(code_lines), code_language)
@@ -757,61 +774,276 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textview.add_child_at_anchor(scrolled, anchor)
         self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
 
-    def _insert_inline_markup(self, text: str, message_tag: str) -> None:
+    def _insert_inline_markup(
+        self,
+        text: str,
+        message_tag: str,
+        buffer: Optional[Gtk.TextBuffer] = None,
+        base_tags: Optional[List[str]] = None,
+    ) -> None:
+        target_buffer = buffer or self.textbuffer
         text = self._strip_emphasis_from_math(text)
         emphasis_pattern = re.compile(r"\*\*(.+?)\*\*|\*(.+?)\*")
         position = 0
+        effective_tags = base_tags or [message_tag]
         for match in emphasis_pattern.finditer(text):
             if match.start() > position:
-                self._insert_text_with_math(text[position:match.start()], [message_tag])
+                self._insert_text_with_math(
+                    text[position:match.start()], effective_tags, target_buffer
+                )
 
             content = match.group(1) or match.group(2)
-            tags = [message_tag, "bold" if match.group(1) else "italic"]
-            self._insert_text_with_math(content, tags)
+            tags = effective_tags + (["bold"] if match.group(1) else ["italic"])
+            self._insert_text_with_math(content, tags, target_buffer)
             position = match.end()
 
         if position < len(text):
-            self._insert_text_with_math(text[position:], [message_tag])
+            self._insert_text_with_math(text[position:], effective_tags, target_buffer)
 
     def _strip_emphasis_from_math(self, text: str) -> str:
         pattern = re.compile(r"(\*\*|\*)(\${1,2})(.+?)\2\1")
         return pattern.sub(lambda match: f"{match.group(2)}{match.group(3)}{match.group(2)}", text)
 
-    def _insert_text_with_math(self, text: str, tags: List[str]) -> None:
+    def _insert_text_with_math(
+        self,
+        text: str,
+        tags: List[str],
+        buffer: Optional[Gtk.TextBuffer] = None,
+    ) -> None:
+        target_buffer = buffer or self.textbuffer
         pattern = re.compile(r"(\${1,2})(.+?)\1")
         position = 0
         for match in pattern.finditer(text):
             start, end = match.span()
             if start > position:
-                self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), text[position:start], *tags
+                target_buffer.insert_with_tags_by_name(
+                    target_buffer.get_end_iter(), text[position:start], *tags
                 )
 
             formula = match.group(2).strip()
             is_block = len(match.group(1)) == 2
-            inserted = self._insert_latex(formula, is_block)
+            inserted = self._insert_latex(formula, is_block, target_buffer)
             if not inserted:
-                self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), match.group(0), *tags
+                target_buffer.insert_with_tags_by_name(
+                    target_buffer.get_end_iter(), match.group(0), *tags
                 )
             position = end
 
         if position < len(text):
-            self.textbuffer.insert_with_tags_by_name(
-                self.textbuffer.get_end_iter(), text[position:], *tags
+            target_buffer.insert_with_tags_by_name(
+                target_buffer.get_end_iter(), text[position:], *tags
             )
 
-    def _insert_latex(self, formula: str, block: bool) -> bool:
+    def _insert_latex(
+        self,
+        formula: str,
+        block: bool,
+        buffer: Optional[Gtk.TextBuffer] = None,
+    ) -> bool:
+        target_buffer = buffer or self.textbuffer
         pixbuf = self._render_latex_pixbuf(formula)
         if not pixbuf:
             return False
 
         if block:
-            self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
-        self.textbuffer.insert_pixbuf(self.textbuffer.get_end_iter(), pixbuf)
+            target_buffer.insert(target_buffer.get_end_iter(), "\n")
+        target_buffer.insert_pixbuf(target_buffer.get_end_iter(), pixbuf)
         if block:
-            self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+            target_buffer.insert(target_buffer.get_end_iter(), "\n")
         return True
+
+    def _maybe_parse_table(
+        self, lines: List[str], start_index: int
+    ) -> Optional[Tuple[List[List[str]], List[str], int]]:
+        header_line = lines[start_index].strip()
+        if "|" not in header_line:
+            return None
+        if start_index + 1 >= len(lines):
+            return None
+        separator_line = lines[start_index + 1].strip()
+        header_cells = self._split_table_row_line(header_line)
+        if not header_cells:
+            return None
+        aligns = self._parse_alignment_line(separator_line, len(header_cells))
+        if not aligns:
+            return None
+
+        rows: List[List[str]] = [header_cells]
+        index = start_index + 2
+        while index < len(lines):
+            current = lines[index]
+            if not current.strip():
+                break
+            if "|" not in current:
+                break
+            rows.append(self._split_table_row_line(current))
+            index += 1
+
+        if len(rows) < 2:
+            return None
+        max_cols = max(len(row) for row in rows)
+        for row in rows:
+            if len(row) < max_cols:
+                row.extend([""] * (max_cols - len(row)))
+        if len(aligns) < max_cols:
+            aligns.extend(["left"] * (max_cols - len(aligns)))
+        return rows, aligns[:max_cols], index
+
+    def _split_table_row_line(self, line: str) -> List[str]:
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            stripped = stripped[1:]
+        if stripped.endswith("|"):
+            stripped = stripped[:-1]
+
+        cells: List[str] = []
+        current = []
+        escaped = False
+        for char in stripped:
+            if escaped:
+                current.append(char)
+                escaped = False
+                continue
+            if char == "\\":
+                escaped = True
+                continue
+            if char == "|":
+                cells.append("".join(current).strip())
+                current = []
+            else:
+                current.append(char)
+        cells.append("".join(current).strip())
+        return cells
+
+    def _parse_alignment_line(self, line: str, expected_cols: int) -> Optional[List[str]]:
+        stripped = line.strip()
+        if not stripped:
+            return None
+        if stripped.startswith("|"):
+            stripped = stripped[1:]
+        if stripped.endswith("|"):
+            stripped = stripped[:-1]
+        segments = [segment.strip() for segment in stripped.split("|")]
+        aligns: List[str] = []
+        alignment_pattern = re.compile(r"^:?-{3,}:?$")
+        for segment in segments:
+            if not alignment_pattern.match(segment):
+                return None
+            if segment.startswith(":") and segment.endswith(":"):
+                aligns.append("center")
+            elif segment.endswith(":"):
+                aligns.append("right")
+            else:
+                aligns.append("left")
+        if len(aligns) < expected_cols:
+            aligns.extend(["left"] * (expected_cols - len(aligns)))
+        return aligns[:expected_cols]
+
+    def _insert_table(
+        self,
+        rows: List[List[str]],
+        aligns: List[str],
+        message_tag: str,
+    ) -> None:
+        grid = Gtk.Grid()
+        grid.set_row_spacing(4)
+        grid.set_column_spacing(8)
+        grid.set_margin_top(6)
+        grid.set_margin_bottom(6)
+        grid.set_margin_start(6)
+        grid.set_margin_end(6)
+        grid.set_column_homogeneous(False)
+        grid.set_hexpand(True)
+        grid.set_vexpand(False)
+
+        textview_width = self.textview.get_allocated_width()
+        table_width = max(250, (textview_width - 40) if textview_width > 0 else 700)
+        column_count = max(len(row) for row in rows)
+        column_width = max(80, (table_width - (grid.get_column_spacing() * (column_count - 1))) // max(1, column_count))
+        size_groups = [
+            Gtk.SizeGroup(mode=Gtk.SizeGroupMode.HORIZONTAL) for _ in range(column_count)
+        ]
+
+        for row_index, row in enumerate(rows):
+            is_header = row_index == 0
+            for col_index in range(column_count):
+                cell_text = row[col_index] if col_index < len(row) else ""
+                alignment = aligns[col_index] if col_index < len(aligns) else "left"
+                cell_view = self._create_table_cell_view(
+                    cell_text,
+                    message_tag,
+                    alignment,
+                    is_header,
+                    column_width,
+                )
+                grid.attach(cell_view, col_index, row_index, 1, 1)
+                size_groups[col_index].add_widget(cell_view)
+
+        frame = Gtk.Frame()
+        frame.set_shadow_type(Gtk.ShadowType.IN)
+        frame.set_hexpand(True)
+        frame.set_vexpand(False)
+        frame.set_size_request(table_width, -1)
+        frame.add(grid)
+        frame.show_all()
+
+        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+        anchor = self.textbuffer.create_child_anchor(self.textbuffer.get_end_iter())
+        self.textview.add_child_at_anchor(frame, anchor)
+        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+
+    def _create_table_cell_view(
+        self,
+        text: str,
+        message_tag: str,
+        alignment: str,
+        is_header: bool,
+        preferred_width: int,
+    ) -> Gtk.Widget:
+        textview = Gtk.TextView()
+        textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        textview.set_editable(False)
+        textview.set_cursor_visible(False)
+        textview.set_left_margin(4)
+        textview.set_right_margin(4)
+        textview.set_top_margin(2)
+        textview.set_bottom_margin(2)
+        textview.set_hexpand(True)
+        textview.set_vexpand(False)
+        if preferred_width > 0:
+            textview.set_size_request(preferred_width, -1)
+        if alignment == "center":
+            textview.set_justification(Gtk.Justification.CENTER)
+        elif alignment == "right":
+            textview.set_justification(Gtk.Justification.RIGHT)
+        else:
+            textview.set_justification(Gtk.Justification.LEFT)
+
+        buffer = textview.get_buffer()
+        self._ensure_buffer_tags(buffer, message_tag)
+        base_tags = [message_tag, "bold"] if is_header else [message_tag]
+        self._insert_inline_markup(text or "", message_tag, buffer, base_tags=base_tags)
+        return textview
+
+    def _ensure_buffer_tags(self, buffer: Gtk.TextBuffer, message_tag: str) -> None:
+        tag_table = buffer.get_tag_table()
+
+        def ensure_tag(name: str, **properties) -> None:
+            tag = tag_table.lookup(name)
+            if not tag:
+                tag = buffer.create_tag(name)
+            for key, value in properties.items():
+                tag.set_property(key.replace("_", "-"), value)
+
+        ensure_tag("bold", weight=Pango.Weight.BOLD)
+        ensure_tag("italic", style=Pango.Style.ITALIC)
+
+        color_map = {
+            "user_message": self.settings.user_color,
+            "assistant_message": self.settings.assistant_color,
+        }
+        color = color_map.get(message_tag, self.settings.assistant_color)
+        ensure_tag(message_tag, foreground=color)
 
     def _render_latex_pixbuf(self, formula: str) -> Optional[GdkPixbuf.Pixbuf]:
         mathtext_module = self._load_mathtext()
