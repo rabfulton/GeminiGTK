@@ -552,6 +552,20 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.textview.set_right_margin(12)
         self.textview.set_top_margin(8)
         self.textview.set_bottom_margin(8)
+        self._apply_margins_to_embedded_widgets()
+
+    def _apply_margins_to_embedded_widgets(self) -> None:
+        left = self.textview.get_left_margin()
+        right = self.textview.get_right_margin()
+        top = self.textview.get_top_margin()
+        bottom = self.textview.get_bottom_margin()
+
+        for child in self.textview.get_children():
+            if isinstance(child, Gtk.ScrolledWindow):
+                child.set_margin_start(left)
+                child.set_margin_end(right)
+                child.set_margin_top(top)
+                child.set_margin_bottom(bottom)
 
     def _update_textview_font(self) -> None:
         if not self._textview_css_provider:
@@ -591,11 +605,14 @@ class ChatWindow(Gtk.ApplicationWindow):
 
     def _render_conversation(self) -> None:
         self._apply_textview_margins()
+        for child in list(self.textview.get_children()):
+            self.textview.remove(child)
         self.textbuffer.set_text("")
         if not self.selected_conversation:
             return
         for message in self.selected_conversation.messages:
             self._append_message(message)
+        self._apply_margins_to_embedded_widgets()
         self.textview.scroll_to_iter(self.textbuffer.get_end_iter(), 0.0, True, 0.0, 1.0)
 
     def _append_message(self, message: Message) -> None:
