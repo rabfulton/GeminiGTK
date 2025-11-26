@@ -477,6 +477,8 @@ class ChatWindow(Gtk.ApplicationWindow):
 
         self._register_tags()
         scrolled.add(self.textview)
+        # Keep a reference to the scrolled window so we can control scroll position
+        self.message_scroller = scrolled
         return scrolled
 
     def _create_input_bar(self) -> Gtk.Widget:
@@ -621,6 +623,16 @@ class ChatWindow(Gtk.ApplicationWindow):
             self._append_message(message)
         self._apply_margins_to_embedded_widgets()
         self.textview.scroll_to_iter(self.textbuffer.get_end_iter(), 0.0, True, 0.0, 1.0)
+
+    def _reset_chat_scroll(self) -> None:
+        """Reset the chat scroll position to the top of the conversation."""
+        scroller = getattr(self, "message_scroller", None)
+        if not scroller:
+            return
+        vadj = scroller.get_vadjustment()
+        if not vadj:
+            return
+        vadj.set_value(vadj.get_lower())
 
     def _append_message(self, message: Message) -> None:
         display_name = (
@@ -1305,6 +1317,9 @@ class ChatWindow(Gtk.ApplicationWindow):
         if convo:
             self.selected_conversation = convo
             self._render_conversation()
+            # When switching conversations via the sidebar, reset scroll so the
+            # user always starts at the top of the selected chat.
+            self._reset_chat_scroll()
 
     def on_attach_image(self, _button: Gtk.Button) -> None:
         dialog = Gtk.FileChooserDialog(
