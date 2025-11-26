@@ -381,6 +381,9 @@ class ChatWindow(Gtk.ApplicationWindow):
         self._mathtext = None
         self._font_manager = None
         self.pending_images: List[str] = []
+        self._resize_connected = False
+        self._resize_idle_id: Optional[int] = None
+        self._last_textview_width: Optional[int] = None
 
         self._restore_window_geometry()
         self.connect("delete-event", self._on_window_delete_event)
@@ -616,20 +619,33 @@ class ChatWindow(Gtk.ApplicationWindow):
             self.textbuffer.insert_pixbuf(self.textbuffer.get_end_iter(), pixbuf)
             self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
 
-        # Connect to the 'size-allocate' signal to redraw images on resize (once)
-        if not hasattr(self, "_resize_connected"):
-            def on_resize(widget, allocation, self=self):
-                # Remove all images and re-insert them at correct scaling
-                # Save old cursor position
-                insert_iter = self.textbuffer.get_start_iter()
-                text = self.textbuffer.get_text(self.textbuffer.get_start_iter(), self.textbuffer.get_end_iter(), True)
-                # Remove all pixbufs by resetting but preserve text
-                self.textbuffer.set_text("")
-                # Re-render conversation to restore all messages and images at current size
-                # This assumes _render_conversation redraws everything, including images
-                self._render_conversation()
-            self.textview.connect("size-allocate", on_resize)
-            self._resize_connected = True
+        self._ensure_resize_handler()
+
+    def _ensure_resize_handler(self) -> None:
+        if self._resize_connected:
+            return
+
+        self.textview.connect("size-allocate", self._on_textview_size_allocate)
+        self._resize_connected = True
+
+    def _on_textview_size_allocate(self, _widget: Gtk.Widget, allocation: Gdk.Rectangle) -> None:
+        new_width = allocation.width
+        if new_width <= 0:
+            return
+        if new_width == self._last_textview_width:
+            return
+
+        self._last_textview_width = new_width
+        if self._resize_idle_id is not None:
+            GLib.source_remove(self._resize_idle_id)
+        # Schedule a redraw once resizing settles to avoid thrashing
+        self._resize_idle_id = GLib.timeout_add(80, self._redraw_conversation_after_resize)
+
+    def _redraw_conversation_after_resize(self) -> bool:
+        self._resize_idle_id = None
+        if self.selected_conversation:
+            self._render_conversation()
+        return False
 
     def _insert_formatted_content(self, text: str, message_tag: str) -> None:
         lines = text.splitlines() or [""]
