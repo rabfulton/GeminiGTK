@@ -44,7 +44,7 @@ The first run will create the `~/.gemini_gtk` directory for storing conversation
 ![Code Feature](Screenshots/code.jpg)
 
 *Support for Equations*
-![Formulae Feature](Screenshots/equations.jpg)
+![Formulae Feature](Screenshots/equations.png)
 
 *Image Generation*
 ![Image Generation](Screenshots/images.jpg)
