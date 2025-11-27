@@ -271,25 +271,25 @@ class ModelClient:
             )
 
             if should_set_config:
-                # Handle different models with their supported resolutions
                 if conversation.model == "gemini-2.5-flash-image":
-                    # Gemini 2.5 Flash Image only supports 1K resolution
-                    image_size = "1K"
-                    aspect_ratio = self.settings.image_aspect_ratio
+                    # Gemini 2.5 Flash Image does not support image_config parameters
+                    config = self.types.GenerateContentConfig(
+                        response_modalities=["TEXT", "IMAGE"]
+                    )
                 else:
-                    # Gemini 3 Pro Image Preview supports 1K, 2K, and 4K resolutions
+                    # Gemini 3 Pro Image Preview supports image_config
                     image_size = self.settings.image_resolution  # "1K", "2K", or "4K"
                     aspect_ratio = self.settings.image_aspect_ratio
 
-                image_config = self.types.ImageConfig(
-                    aspect_ratio=aspect_ratio,
-                    image_size=image_size
-                )
+                    image_config = self.types.ImageConfig(
+                        aspect_ratio=aspect_ratio,
+                        image_size=image_size
+                    )
 
-                config = self.types.GenerateContentConfig(
-                    response_modalities=["TEXT", "IMAGE"],
-                    image_config=image_config
-                )
+                    config = self.types.GenerateContentConfig(
+                        response_modalities=["TEXT", "IMAGE"],
+                        image_config=image_config
+                    )
 
         try:
             response = self.client.models.generate_content(

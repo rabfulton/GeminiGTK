@@ -38,7 +38,7 @@ Native GTK+ 3 desktop client for exploring Gemini and Nano Banana models.
 
 The first run will create the `~/.gemini_gtk` directory for storing conversations.
 
-## Screenshots
+## AI Improved Screenshots
 
 *Syntax highlighting*
 ![Code Feature](Screenshots/code.jpg)
