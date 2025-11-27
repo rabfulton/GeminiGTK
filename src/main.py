@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -730,10 +731,71 @@ class ChatWindow(Gtk.ApplicationWindow):
                 scaled_height = int(pixbuf.get_height() * (max_width / width))
                 pixbuf = pixbuf.scale_simple(max_width, scaled_height, GdkPixbuf.InterpType.BILINEAR)
 
-            self.textbuffer.insert_pixbuf(self.textbuffer.get_end_iter(), pixbuf)
+            anchor = self.textbuffer.create_child_anchor(self.textbuffer.get_end_iter())
+            image_widget = Gtk.Image.new_from_pixbuf(pixbuf)
+            event_box = Gtk.EventBox()
+            event_box.set_visible_window(False)
+            event_box.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+            event_box.add(image_widget)
+            event_box.connect("button-press-event", self._on_image_button_press, image_path)
+            event_box.show_all()
+
+            self.textview.add_child_at_anchor(event_box, anchor)
             self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
 
         self._ensure_resize_handler()
+
+    def _on_image_button_press(
+        self, widget: Gtk.Widget, event: Gdk.EventButton, image_path: str
+    ) -> bool:
+        if event.type == Gdk.EventType.BUTTON_PRESS and event.button == 3:
+            menu = Gtk.Menu()
+            save_item = Gtk.MenuItem(label="Save Image As…")
+            save_item.connect("activate", self._on_save_image, image_path)
+            menu.append(save_item)
+            menu.show_all()
+            try:
+                menu.popup_at_pointer(event)
+            except AttributeError:
+                menu.popup(None, None, None, None, event.button, event.time)
+            return True
+        return False
+
+    def _on_save_image(self, _menu_item: Gtk.MenuItem, image_path: str) -> None:
+        dialog = Gtk.FileChooserNative(
+            title="Save Image",
+            transient_for=self,
+            modal=True,
+            action=Gtk.FileChooserAction.SAVE,
+        )
+        dialog.set_current_name(Path(image_path).name)
+
+        filter_images = Gtk.FileFilter()
+        filter_images.set_name("Image files")
+        filter_images.add_mime_type("image/*")
+        dialog.add_filter(filter_images)
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.ACCEPT:
+            destination = dialog.get_filename()
+            if destination:
+                try:
+                    shutil.copyfile(image_path, destination)
+                except Exception as exc:  # noqa: BLE001
+                    self._show_error_dialog("Failed to save image", str(exc))
+        dialog.destroy()
+
+    def _show_error_dialog(self, title: str, message: str) -> None:
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.ERROR,
+            buttons=Gtk.ButtonsType.CLOSE,
+            text=title,
+        )
+        dialog.format_secondary_text(message)
+        dialog.run()
+        dialog.destroy()
 
     def _ensure_resize_handler(self) -> None:
         if self._resize_connected:
