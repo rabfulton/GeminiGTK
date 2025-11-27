@@ -232,7 +232,7 @@ class ModelClient:
             if message.content or message.images:
                 parts = []
                 if message.content:
-                    parts.append(self.types.Part(text=message.content))
+                    parts.append(self._text_part(message.content))
 
                 # Handle user-provided images
                 for image_path in message.images:
@@ -240,9 +240,6 @@ class ModelClient:
                         try:
                             from PIL import Image
                             pil_image = Image.open(image_path)
-                            # Convert to RGB if necessary
-                            if pil_image.mode not in ("RGB", "RGBA"):
-                                pil_image = pil_image.convert("RGB")
                             parts.append(self._image_part(pil_image, conversation.model))
                         except Exception as exc:  # noqa: BLE001
                             # If image loading fails, continue without it
@@ -321,20 +318,39 @@ class ModelClient:
 
     def _image_part(self, pil_image: "Image", model: str) -> object:
         """Convert a PIL Image to a Part object in the format expected by the API."""
-        from io import BytesIO
-
         processed = self._prepare_image_for_model(pil_image, model)
+
+        # Prefer the SDK's native image helper when available to match sample usage
+        # (contents=[prompt, image]). Fall back to PNG bytes for older versions.
+        from_image = getattr(self.types.Part, "from_image", None)
+        if callable(from_image):
+            try:
+                return from_image(processed)
+            except Exception:
+                pass
+
+        from io import BytesIO
 
         buffer = BytesIO()
         processed.save(buffer, format="PNG")
         image_bytes = buffer.getvalue()
 
-        # The Gemini API expects image bytes to be wrapped in a Part via from_bytes.
-        # See https://ai.google.dev/gemini-api/docs/image-generation for details.
         return self.types.Part.from_bytes(
             data=image_bytes,
             mime_type="image/png",
         )
+
+    def _text_part(self, text: str) -> object:
+        """Create a text part using the SDK helper when available."""
+
+        from_text = getattr(self.types.Part, "from_text", None)
+        if callable(from_text):
+            try:
+                return from_text(text)
+            except Exception:
+                pass
+
+        return self.types.Part(text=text)
 
     def _prepare_image_for_model(self, pil_image: "Image", model: str) -> "Image":
         """Ensure the image is RGB and within the target size for the selected model."""
