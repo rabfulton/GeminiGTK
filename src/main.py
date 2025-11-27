@@ -21,7 +21,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version('GdkPixbuf', '2.0')
 gi.require_version('Gdk', '3.0')
 gi.require_version('GtkSource', '3.0')
-from gi.repository import GLib, Gdk, GdkPixbuf, Gtk, GtkSource, Pango
+from gi.repository import GLib, Gdk, GdkPixbuf, GObject, Gtk, GtkSource, Pango
 
 from google import genai
 from google.genai import types
@@ -71,6 +71,7 @@ class Settings:
     window_height: int = 600
     window_x: Optional[int] = None
     window_y: Optional[int] = None
+    sidebar_width: int = 250
     image_resolution: str = "2K"  # Default to 2K for Gemini 3
     image_aspect_ratio: str = "1:1"
 
@@ -100,6 +101,7 @@ class SettingsStore:
             window_height=int(data.get("window_height", self.settings.window_height)),
             window_x=data.get("window_x", self.settings.window_x),
             window_y=data.get("window_y", self.settings.window_y),
+            sidebar_width=int(data.get("sidebar_width", self.settings.sidebar_width)),
             image_resolution=data.get("image_resolution", self.settings.image_resolution),
             image_aspect_ratio=data.get("image_aspect_ratio", self.settings.image_aspect_ratio),
         )
@@ -115,6 +117,7 @@ class SettingsStore:
             "window_height": self.settings.window_height,
             "window_x": self.settings.window_x,
             "window_y": self.settings.window_y,
+            "sidebar_width": self.settings.sidebar_width,
             "image_resolution": self.settings.image_resolution,
             "image_aspect_ratio": self.settings.image_aspect_ratio,
         }
@@ -399,14 +402,16 @@ class ChatWindow(Gtk.ApplicationWindow):
         self._restore_window_geometry()
         self.connect("delete-event", self._on_window_delete_event)
 
-        root_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        self.add(root_box)
+        self.paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        self.paned.set_position(self.settings.sidebar_width)
+        self.paned.connect("notify::position", self._on_sidebar_resize)
+        self.add(self.paned)
 
         self.sidebar = self._create_sidebar()
-        root_box.pack_start(self.sidebar, False, False, 0)
+        self.paned.pack1(self.sidebar, False, False)
 
         content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
-        root_box.pack_start(content_box, True, True, 0)
+        self.paned.pack2(content_box, True, False)
 
         self.message_view = self._create_message_view()
         content_box.pack_start(self.message_view, True, True, 0)
@@ -436,6 +441,12 @@ class ChatWindow(Gtk.ApplicationWindow):
         x, y = self.get_position()
         self.settings.window_x = x
         self.settings.window_y = y
+        self.settings.sidebar_width = self.paned.get_position()
+        self.settings_store.save()
+
+    def _on_sidebar_resize(self, _paned: Gtk.Paned, _param: GObject.ParamSpec) -> None:
+        """Handle sidebar resize events by saving the new width."""
+        self.settings.sidebar_width = self.paned.get_position()
         self.settings_store.save()
 
     def _on_window_delete_event(self, *_args) -> bool:
@@ -444,7 +455,6 @@ class ChatWindow(Gtk.ApplicationWindow):
 
     def _create_sidebar(self) -> Gtk.Widget:
         frame = Gtk.Frame()
-        frame.set_size_request(250, -1)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=6)
         frame.add(box)
 
