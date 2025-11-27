@@ -241,9 +241,9 @@ class ModelClient:
                             from PIL import Image
                             pil_image = Image.open(image_path)
                             # Convert to RGB if necessary
-                            if pil_image.mode not in ('RGB', 'RGBA'):
-                                pil_image = pil_image.convert('RGB')
-                            parts.append(self.types.Part(inline_data=self._image_to_inline_data(pil_image)))
+                            if pil_image.mode not in ("RGB", "RGBA"):
+                                pil_image = pil_image.convert("RGB")
+                            parts.append(self._image_part(pil_image))
                         except Exception as exc:  # noqa: BLE001
                             # If image loading fails, continue without it
                             continue
@@ -319,17 +319,19 @@ class ModelClient:
                         images.append(image_path)
         return "".join(text_parts), images
 
-    def _image_to_inline_data(self, pil_image: "Image") -> object:
-        """Convert a PIL Image to inline data format for the API."""
+    def _image_part(self, pil_image: "Image") -> object:
+        """Convert a PIL Image to a Part object in the format expected by the API."""
         from io import BytesIO
 
         buffer = BytesIO()
         pil_image.save(buffer, format="PNG")
         image_bytes = buffer.getvalue()
 
-        return self.types.Blob(
-            mime_type="image/png",
+        # The Gemini API expects image bytes to be wrapped in a Part via from_bytes.
+        # See https://ai.google.dev/gemini-api/docs/image-generation for details.
+        return self.types.Part.from_bytes(
             data=image_bytes,
+            mime_type="image/png",
         )
 
     def _save_inline_image(self, inline_data: object) -> Optional[str]:
