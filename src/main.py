@@ -243,7 +243,7 @@ class ModelClient:
                             # Convert to RGB if necessary
                             if pil_image.mode not in ("RGB", "RGBA"):
                                 pil_image = pil_image.convert("RGB")
-                            parts.append(self._image_part(pil_image))
+                            parts.append(self._image_part(pil_image, conversation.model))
                         except Exception as exc:  # noqa: BLE001
                             # If image loading fails, continue without it
                             continue
@@ -319,12 +319,14 @@ class ModelClient:
                         images.append(image_path)
         return "".join(text_parts), images
 
-    def _image_part(self, pil_image: "Image") -> object:
+    def _image_part(self, pil_image: "Image", model: str) -> object:
         """Convert a PIL Image to a Part object in the format expected by the API."""
         from io import BytesIO
 
+        processed = self._prepare_image_for_model(pil_image, model)
+
         buffer = BytesIO()
-        pil_image.save(buffer, format="PNG")
+        processed.save(buffer, format="PNG")
         image_bytes = buffer.getvalue()
 
         # The Gemini API expects image bytes to be wrapped in a Part via from_bytes.
@@ -333,6 +335,31 @@ class ModelClient:
             data=image_bytes,
             mime_type="image/png",
         )
+
+    def _prepare_image_for_model(self, pil_image: "Image", model: str) -> "Image":
+        """Ensure the image is RGB and within the target size for the selected model."""
+        from PIL import Image
+
+        if pil_image.mode != "RGB":
+            pil_image = pil_image.convert("RGB")
+
+        max_edge = None
+        if model == "gemini-2.5-flash-image":
+            # Nano Banana only accepts up to 1K resolution.
+            max_edge = 1024
+        elif model == "gemini-3-pro-image-preview":
+            resolution_to_edge = {"1K": 1024, "2K": 2048, "4K": 4096}
+            max_edge = resolution_to_edge.get(self.settings.image_resolution, 2048)
+
+        if max_edge:
+            width, height = pil_image.size
+            largest_edge = max(width, height)
+            if largest_edge > max_edge:
+                scale = max_edge / float(largest_edge)
+                new_size = (max(int(width * scale), 1), max(int(height * scale), 1))
+                pil_image = pil_image.resize(new_size, Image.Resampling.LANCZOS)
+
+        return pil_image
 
     def _save_inline_image(self, inline_data: object) -> Optional[str]:
         raw_data = getattr(inline_data, "data", None)
