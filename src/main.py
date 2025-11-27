@@ -847,6 +847,7 @@ class ChatWindow(Gtk.ApplicationWindow):
         if language:
             buffer.set_language(language)
         buffer.set_highlight_syntax(True)
+        buffer.set_highlight_matching_brackets(False)
 
         source_view = GtkSource.View.new_with_buffer(buffer)
         source_view.set_editable(False)
