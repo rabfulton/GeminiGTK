@@ -293,27 +293,45 @@ class ModelClient:
         return True, text.strip(), images
 
     def _extract_candidate_parts(self, response: object) -> Tuple[str, List[str]]:
-        candidates = getattr(response, "candidates", None)
-        if not candidates:
-            return "", []
-
         text_parts: List[str] = []
         images: List[str] = []
 
-        for candidate in candidates:
-            content = getattr(candidate, "content", None)
-            parts = getattr(content, "parts", None) if content else None
+        def handle_parts(parts: Optional[List[object]]) -> None:
             if not parts:
-                continue
+                return
             for part in parts:
                 text = getattr(part, "text", "")
                 if text:
                     text_parts.append(text)
+
                 inline_data = getattr(part, "inline_data", None)
                 if inline_data:
                     image_path = self._save_inline_image(inline_data)
                     if image_path:
                         images.append(image_path)
+                    continue
+
+                # Some SDK versions offer as_image() to decode inline image data.
+                as_image = getattr(part, "as_image", None)
+                if callable(as_image):
+                    try:
+                        pil_image = as_image()
+                    except Exception:  # noqa: BLE001
+                        pil_image = None
+                    if pil_image:
+                        image_path = self._save_pil_image(pil_image)
+                        if image_path:
+                            images.append(image_path)
+
+        candidates = getattr(response, "candidates", None)
+        if candidates:
+            for candidate in candidates:
+                content = getattr(candidate, "content", None)
+                handle_parts(getattr(content, "parts", None) if content else None)
+
+        # Some responses expose parts directly on the response (SDK sample style).
+        handle_parts(getattr(response, "parts", None))
+
         return "".join(text_parts), images
 
     def _image_part(self, pil_image: "Image", model: str) -> object:
@@ -408,6 +426,17 @@ class ModelClient:
             with filename.open("wb") as f:
                 f.write(image_bytes)
         except OSError:
+            return None
+
+        return str(filename)
+
+    def _save_pil_image(self, image: "Image") -> Optional[str]:
+        """Persist a PIL image returned by the SDK and return its path."""
+
+        filename = IMAGES_DIR / f"{uuid.uuid4()}.png"
+        try:
+            image.save(filename, format="PNG")
+        except Exception:  # noqa: BLE001
             return None
 
         return str(filename)
