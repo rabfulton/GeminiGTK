@@ -643,7 +643,6 @@ class ChatWindow(Gtk.ApplicationWindow):
         for message in self.selected_conversation.messages:
             self._append_message(message)
         self._apply_margins_to_embedded_widgets()
-        self.textview.scroll_to_iter(self.textbuffer.get_end_iter(), 0.0, True, 0.0, 1.0)
 
     def _reset_chat_scroll(self) -> None:
         """Reset the chat scroll position to the top of the conversation."""
@@ -654,6 +653,16 @@ class ChatWindow(Gtk.ApplicationWindow):
         if not vadj:
             return
         vadj.set_value(vadj.get_lower())
+
+    def _scroll_chat_to_bottom(self) -> None:
+        """Scroll the chat to the bottom to show the latest messages."""
+        scroller = getattr(self, "message_scroller", None)
+        if not scroller:
+            return
+        vadj = scroller.get_vadjustment()
+        if not vadj:
+            return
+        vadj.set_value(vadj.get_upper() - vadj.get_page_size())
 
     def _append_message(self, message: Message) -> None:
         display_name = (
@@ -1358,7 +1367,7 @@ class ChatWindow(Gtk.ApplicationWindow):
             self._render_conversation()
             # When switching conversations via the sidebar, reset scroll so the
             # user always starts at the top of the selected chat.
-            self._reset_chat_scroll()
+            GLib.idle_add(self._reset_chat_scroll)
 
     def on_attach_image(self, _button: Gtk.Button) -> None:
         dialog = Gtk.FileChooserDialog(
@@ -1411,6 +1420,8 @@ class ChatWindow(Gtk.ApplicationWindow):
         self.selected_conversation.messages.append(user_msg)
         self.store.save()
         self._render_conversation()
+        # Scroll to bottom to show the user's new message (defer until after UI update)
+        GLib.idle_add(self._scroll_chat_to_bottom)
         self.entry.set_text("")
         self.pending_images.clear()
         self._update_input_bar_display()
@@ -1450,6 +1461,8 @@ class ChatWindow(Gtk.ApplicationWindow):
         if self.selected_conversation and self.selected_conversation.id == convo.id:
             self._refresh_sidebar()
             self._render_conversation()
+            # Scroll to bottom to show the new response (defer until after UI update)
+            GLib.idle_add(self._scroll_chat_to_bottom)
         return False
 
 
