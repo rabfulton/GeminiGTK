@@ -547,11 +547,21 @@ class ChatWindow(Gtk.ApplicationWindow):
 
     def _register_tags(self, buffer: Gtk.TextBuffer) -> None:
         buffer.create_tag("role_base", weight=Pango.Weight.BOLD, scale=1.05)
-        buffer.create_tag("user_role")
-        buffer.create_tag("assistant_role")
+        buffer.create_tag("user_role", foreground=self.settings.user_color)
+        buffer.create_tag("assistant_role", foreground=self.settings.assistant_color)
         buffer.create_tag("timestamp", foreground="#777777", scale=0.9)
-        buffer.create_tag("user_message", pixels_above_lines=2, pixels_below_lines=6)
-        buffer.create_tag("assistant_message", pixels_above_lines=2, pixels_below_lines=6)
+        buffer.create_tag(
+            "user_message",
+            pixels_above_lines=2,
+            pixels_below_lines=6,
+            foreground=self.settings.user_color,
+        )
+        buffer.create_tag(
+            "assistant_message",
+            pixels_above_lines=2,
+            pixels_below_lines=6,
+            foreground=self.settings.assistant_color,
+        )
         buffer.create_tag("heading1", weight=Pango.Weight.BOLD, scale=1.35)
         buffer.create_tag("heading2", weight=Pango.Weight.BOLD, scale=1.2)
         buffer.create_tag("heading3", weight=Pango.Weight.BOLD, scale=1.1)
@@ -561,7 +571,6 @@ class ChatWindow(Gtk.ApplicationWindow):
         buffer.create_tag("code", family="Monospace", background="#f5f5f5")
         buffer.create_tag("bullet", left_margin=24, indent=-24)
         buffer.create_tag("hr", foreground="#999999", pixels_above_lines=6, pixels_below_lines=6)
-        self._apply_settings()
 
     def _apply_settings(self) -> None:
         for textview in self._message_textviews:
