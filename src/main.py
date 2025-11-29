@@ -399,6 +399,10 @@ class ChatWindow(Gtk.ApplicationWindow):
         self._resize_idle_id: Optional[int] = None
         self._last_textview_width: Optional[int] = None
         self._textview_css_provider: Optional[Gtk.CssProvider] = None
+        self._message_textviews: List[Gtk.TextView] = []
+        self._message_buffers: List[Gtk.TextBuffer] = []
+        self._active_textview: Optional[Gtk.TextView] = None
+        self._active_buffer: Optional[Gtk.TextBuffer] = None
 
         self._restore_window_geometry()
         self.connect("delete-event", self._on_window_delete_event)
@@ -487,20 +491,30 @@ class ChatWindow(Gtk.ApplicationWindow):
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
 
-        self.textview = Gtk.TextView()
-        self.textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
-        self.textview.set_editable(False)
-        self.textbuffer = self.textview.get_buffer()
-        self.textview.get_style_context().add_class("chat-textview")
-        self._ensure_textview_css()
-        self._apply_textview_margins()
-        self.textview.connect("size-allocate", self._on_textview_size_allocate)
+        viewport = Gtk.Viewport()
+        viewport.set_shadow_type(Gtk.ShadowType.NONE)
+        self.message_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=6)
+        viewport.add(self.message_list)
+        scrolled.add(viewport)
 
-        self._register_tags()
-        scrolled.add(self.textview)
         # Keep a reference to the scrolled window so we can control scroll position
         self.message_scroller = scrolled
         return scrolled
+
+    def _create_message_textview(self) -> Gtk.TextView:
+        textview = Gtk.TextView()
+        textview.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        textview.set_editable(False)
+        textview.get_style_context().add_class("chat-textview")
+        self._ensure_textview_css(textview)
+        self._apply_textview_margins(textview)
+        textview.connect("size-allocate", self._on_textview_size_allocate)
+
+        buffer = textview.get_buffer()
+        self._register_tags(buffer)
+        self._message_textviews.append(textview)
+        self._message_buffers.append(buffer)
+        return textview
 
     def _create_input_bar(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6, margin=6)
@@ -531,67 +545,78 @@ class ChatWindow(Gtk.ApplicationWindow):
 
         return box
 
-    def _register_tags(self) -> None:
-        self.textbuffer.create_tag("role_base", weight=Pango.Weight.BOLD, scale=1.05)
-        self.textbuffer.create_tag("user_role")
-        self.textbuffer.create_tag("assistant_role")
-        self.textbuffer.create_tag("timestamp", foreground="#777777", scale=0.9)
-        self.textbuffer.create_tag("user_message", pixels_above_lines=2, pixels_below_lines=6)
-        self.textbuffer.create_tag("assistant_message", pixels_above_lines=2, pixels_below_lines=6)
-        self.textbuffer.create_tag("heading1", weight=Pango.Weight.BOLD, scale=1.35)
-        self.textbuffer.create_tag("heading2", weight=Pango.Weight.BOLD, scale=1.2)
-        self.textbuffer.create_tag("heading3", weight=Pango.Weight.BOLD, scale=1.1)
-        self.textbuffer.create_tag("heading4", weight=Pango.Weight.BOLD, scale=1.0)
-        self.textbuffer.create_tag("bold", weight=Pango.Weight.BOLD)
-        self.textbuffer.create_tag("italic", style=Pango.Style.ITALIC)
-        self.textbuffer.create_tag("code", family="Monospace", background="#f5f5f5")
-        self.textbuffer.create_tag("bullet", left_margin=24, indent=-24)
-        self.textbuffer.create_tag("hr", foreground="#999999", pixels_above_lines=6, pixels_below_lines=6)
-        self._apply_settings()
+    def _register_tags(self, buffer: Gtk.TextBuffer) -> None:
+        buffer.create_tag("role_base", weight=Pango.Weight.BOLD, scale=1.05)
+        buffer.create_tag("user_role", foreground=self.settings.user_color)
+        buffer.create_tag("assistant_role", foreground=self.settings.assistant_color)
+        buffer.create_tag("timestamp", foreground="#777777", scale=0.9)
+        buffer.create_tag(
+            "user_message",
+            pixels_above_lines=2,
+            pixels_below_lines=6,
+            foreground=self.settings.user_color,
+        )
+        buffer.create_tag(
+            "assistant_message",
+            pixels_above_lines=2,
+            pixels_below_lines=6,
+            foreground=self.settings.assistant_color,
+        )
+        buffer.create_tag("heading1", weight=Pango.Weight.BOLD, scale=1.35)
+        buffer.create_tag("heading2", weight=Pango.Weight.BOLD, scale=1.2)
+        buffer.create_tag("heading3", weight=Pango.Weight.BOLD, scale=1.1)
+        buffer.create_tag("heading4", weight=Pango.Weight.BOLD, scale=1.0)
+        buffer.create_tag("bold", weight=Pango.Weight.BOLD)
+        buffer.create_tag("italic", style=Pango.Style.ITALIC)
+        buffer.create_tag("code", family="Monospace", background="#f5f5f5")
+        buffer.create_tag("bullet", left_margin=24, indent=-24)
+        buffer.create_tag("hr", foreground="#999999", pixels_above_lines=6, pixels_below_lines=6)
 
     def _apply_settings(self) -> None:
-        self._ensure_textview_css()
-        self._apply_textview_margins()
+        for textview in self._message_textviews:
+            self._ensure_textview_css(textview)
+            self._apply_textview_margins(textview)
         self._update_textview_font()
 
-        tag_table = self.textbuffer.get_tag_table()
-        for tag_name, color in (
-            ("user_role", self.settings.user_color),
-            ("assistant_role", self.settings.assistant_color),
-            ("user_message", self.settings.user_color),
-            ("assistant_message", self.settings.assistant_color),
-        ):
-            tag = tag_table.lookup(tag_name)
-            if tag:
-                tag.set_property("foreground", color)
+        for buffer in self._message_buffers:
+            tag_table = buffer.get_tag_table()
+            for tag_name, color in (
+                ("user_role", self.settings.user_color),
+                ("assistant_role", self.settings.assistant_color),
+                ("user_message", self.settings.user_color),
+                ("assistant_message", self.settings.assistant_color),
+            ):
+                tag = tag_table.lookup(tag_name)
+                if tag:
+                    tag.set_property("foreground", color)
 
         # Also update the sidebar so conversation titles reflect the new font
         # size when settings change.
         if hasattr(self, "listbox"):
             self._refresh_sidebar()
 
-    def _ensure_textview_css(self) -> None:
+    def _ensure_textview_css(self, textview: Gtk.TextView) -> None:
         if not self._textview_css_provider:
             self._textview_css_provider = Gtk.CssProvider()
-        context = self.textview.get_style_context()
+        context = textview.get_style_context()
         context.add_provider(self._textview_css_provider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
         self._update_textview_font()
 
-    def _apply_textview_margins(self) -> None:
-        self.textview.set_left_margin(12)
-        self.textview.set_right_margin(12)
-        self.textview.set_top_margin(8)
-        self.textview.set_bottom_margin(8)
-        self._apply_margins_to_embedded_widgets()
+    def _apply_textview_margins(self, textview: Gtk.TextView) -> None:
+        textview.set_left_margin(12)
+        textview.set_right_margin(12)
+        textview.set_top_margin(8)
+        textview.set_bottom_margin(8)
+        self._apply_margins_to_embedded_widgets(textview)
 
-    def _apply_margins_to_embedded_widgets(self) -> None:
-        left = self.textview.get_left_margin()
-        right = self.textview.get_right_margin()
-        top = self.textview.get_top_margin()
-        bottom = self.textview.get_bottom_margin()
-        content_width = max(0, self.textview.get_allocated_width() - (left + right))
+    def _apply_margins_to_embedded_widgets(self, textview: Gtk.TextView) -> None:
+        left = textview.get_left_margin()
+        right = textview.get_right_margin()
+        top = textview.get_top_margin()
+        bottom = textview.get_bottom_margin()
+        content_width = max(0, textview.get_allocated_width() - (left + right))
 
-        for child in self.textview.get_children():
+        for child in textview.get_children():
             if isinstance(child, Gtk.ScrolledWindow):
                 child.set_margin_start(left)
                 child.set_margin_end(right)
@@ -599,9 +624,6 @@ class ChatWindow(Gtk.ApplicationWindow):
                 child.set_margin_bottom(bottom)
                 if content_width:
                     child.set_min_content_width(content_width)
-
-    def _on_textview_size_allocate(self, *_args) -> None:
-        self._apply_margins_to_embedded_widgets()
 
     def _update_textview_font(self) -> None:
         if not self._textview_css_provider:
@@ -655,15 +677,14 @@ class ChatWindow(Gtk.ApplicationWindow):
                 break
 
     def _render_conversation(self) -> None:
-        self._apply_textview_margins()
-        for child in list(self.textview.get_children()):
-            self.textview.remove(child)
-        self.textbuffer.set_text("")
+        for child in list(self.message_list.get_children()):
+            self.message_list.remove(child)
+        self._message_textviews.clear()
+        self._message_buffers.clear()
         if not self.selected_conversation:
             return
         for message in self.selected_conversation.messages:
             self._append_message(message)
-        self._apply_margins_to_embedded_widgets()
 
     def _reset_chat_scroll(self) -> None:
         """Reset the chat scroll position to the top of the conversation."""
@@ -700,17 +721,38 @@ class ChatWindow(Gtk.ApplicationWindow):
             else "assistant_message"
         )
 
-        self.textbuffer.insert_with_tags_by_name(
-            self.textbuffer.get_end_iter(), f"{display_name}\n", "role_base", role_tag
-        )
-        self.textbuffer.insert_with_tags_by_name(
-            self.textbuffer.get_end_iter(), f"{message.timestamp}\n", "timestamp"
-        )
-        self._insert_formatted_content(message.content, message_tag)
-        self._insert_images(getattr(message, "images", []))
-        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+        textview = self._create_message_textview()
+        buffer = textview.get_buffer()
+        self._active_textview = textview
+        self._active_buffer = buffer
 
-    def _insert_images(self, images: List[str]) -> None:
+        header_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        name_label = Gtk.Label(label=display_name, xalign=0)
+        name_label.get_style_context().add_class("message-header")
+        timestamp_label = Gtk.Label(label=message.timestamp, xalign=1)
+        timestamp_label.get_style_context().add_class("message-timestamp")
+        header_box.pack_start(name_label, True, True, 0)
+        header_box.pack_start(timestamp_label, False, False, 0)
+
+        self._insert_formatted_content(message.content, message_tag, buffer, textview)
+        self._insert_images(getattr(message, "images", []), buffer, textview)
+
+        container = Gtk.Frame()
+        container.set_shadow_type(Gtk.ShadowType.IN)
+        outer_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=6)
+        outer_box.pack_start(header_box, False, False, 0)
+        outer_box.pack_start(textview, True, True, 0)
+        container.add(outer_box)
+        container.show_all()
+
+        self.message_list.pack_start(container, False, False, 0)
+
+    def _insert_images(
+        self,
+        images: List[str],
+        buffer: Gtk.TextBuffer,
+        textview: Gtk.TextView,
+    ) -> None:
         # Store image info for potential redraw
         if not hasattr(self, "_images_to_insert"):
             self._images_to_insert = []
@@ -725,13 +767,13 @@ class ChatWindow(Gtk.ApplicationWindow):
                 continue
 
             width = pixbuf.get_width()
-            textview_width = self.textview.get_allocated_width()
+            textview_width = textview.get_allocated_width()
             max_width = max(100, textview_width - 40) if textview_width > 0 else 500
             if width > max_width:
                 scaled_height = int(pixbuf.get_height() * (max_width / width))
                 pixbuf = pixbuf.scale_simple(max_width, scaled_height, GdkPixbuf.InterpType.BILINEAR)
 
-            anchor = self.textbuffer.create_child_anchor(self.textbuffer.get_end_iter())
+            anchor = buffer.create_child_anchor(buffer.get_end_iter())
             image_widget = Gtk.Image.new_from_pixbuf(pixbuf)
             event_box = Gtk.EventBox()
             event_box.set_visible_window(False)
@@ -740,8 +782,8 @@ class ChatWindow(Gtk.ApplicationWindow):
             event_box.connect("button-press-event", self._on_image_button_press, image_path)
             event_box.show_all()
 
-            self.textview.add_child_at_anchor(event_box, anchor)
-            self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+            textview.add_child_at_anchor(event_box, anchor)
+            buffer.insert(buffer.get_end_iter(), "\n")
 
         self._ensure_resize_handler()
 
@@ -800,8 +842,10 @@ class ChatWindow(Gtk.ApplicationWindow):
     def _ensure_resize_handler(self) -> None:
         if self._resize_connected:
             return
-
-        self.textview.connect("size-allocate", self._on_textview_size_allocate)
+        target = getattr(self, "message_list", None)
+        if not target:
+            return
+        target.connect("size-allocate", self._on_textview_size_allocate)
         self._resize_connected = True
 
     def _on_textview_size_allocate(self, _widget: Gtk.Widget, allocation: Gdk.Rectangle) -> None:
@@ -823,7 +867,13 @@ class ChatWindow(Gtk.ApplicationWindow):
             self._render_conversation()
         return False
 
-    def _insert_formatted_content(self, text: str, message_tag: str) -> None:
+    def _insert_formatted_content(
+        self,
+        text: str,
+        message_tag: str,
+        buffer: Gtk.TextBuffer,
+        textview: Gtk.TextView,
+    ) -> None:
         lines = text.splitlines() or [""]
         in_code_block = False
         code_lines: List[str] = []
@@ -836,7 +886,7 @@ class ChatWindow(Gtk.ApplicationWindow):
 
             if stripped.startswith("```"):
                 if in_code_block:
-                    self._insert_code_block("\n".join(code_lines), code_language)
+                    self._insert_code_block("\n".join(code_lines), code_language, buffer, textview)
                     code_lines = []
                     code_language = None
                 else:
@@ -853,12 +903,12 @@ class ChatWindow(Gtk.ApplicationWindow):
             table_parse = self._maybe_parse_table(lines, index)
             if table_parse:
                 rows, aligns, next_index = table_parse
-                self._insert_table(rows, aligns, message_tag)
+                self._insert_table(rows, aligns, message_tag, buffer, textview)
                 index = next_index
                 continue
 
             if stripped in {"***", "---"}:
-                self._insert_horizontal_rule()
+                self._insert_horizontal_rule(buffer, textview)
                 index += 1
                 continue
 
@@ -867,6 +917,7 @@ class ChatWindow(Gtk.ApplicationWindow):
                 self._insert_inline_markup(
                     line[5:] + "\n",
                     message_tag,
+                    buffer,
                     base_tags=[message_tag, "heading4"],
                 )
                 index += 1
@@ -876,6 +927,7 @@ class ChatWindow(Gtk.ApplicationWindow):
                 self._insert_inline_markup(
                     line[4:] + "\n",
                     message_tag,
+                    buffer,
                     base_tags=[message_tag, "heading3"],
                 )
                 index += 1
@@ -885,6 +937,7 @@ class ChatWindow(Gtk.ApplicationWindow):
                 self._insert_inline_markup(
                     line[3:] + "\n",
                     message_tag,
+                    buffer,
                     base_tags=[message_tag, "heading2"],
                 )
                 index += 1
@@ -894,6 +947,7 @@ class ChatWindow(Gtk.ApplicationWindow):
                 self._insert_inline_markup(
                     line[2:] + "\n",
                     message_tag,
+                    buffer,
                     base_tags=[message_tag, "heading1"],
                 )
                 index += 1
@@ -901,20 +955,26 @@ class ChatWindow(Gtk.ApplicationWindow):
 
             bullet_match = re.match(r"^([-*])\s+(.*)", stripped)
             if bullet_match:
-                self.textbuffer.insert_with_tags_by_name(
-                    self.textbuffer.get_end_iter(), "• ", message_tag, "bullet"
+                buffer.insert_with_tags_by_name(
+                    buffer.get_end_iter(), "• ", message_tag, "bullet"
                 )
-                self._insert_inline_markup(bullet_match.group(2) + "\n", message_tag)
+                self._insert_inline_markup(bullet_match.group(2) + "\n", message_tag, buffer)
                 index += 1
                 continue
 
-            self._insert_inline_markup(line + "\n", message_tag)
+            self._insert_inline_markup(line + "\n", message_tag, buffer)
             index += 1
 
         if in_code_block and code_lines:
-            self._insert_code_block("\n".join(code_lines), code_language)
+            self._insert_code_block("\n".join(code_lines), code_language, buffer, textview)
 
-    def _insert_code_block(self, code: str, language_hint: Optional[str]) -> None:
+    def _insert_code_block(
+        self,
+        code: str,
+        language_hint: Optional[str],
+        target_buffer: Gtk.TextBuffer,
+        textview: Gtk.TextView,
+    ) -> None:
         buffer = GtkSource.Buffer()
         buffer.set_text(code)
 
@@ -952,24 +1012,24 @@ class ChatWindow(Gtk.ApplicationWindow):
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
         scrolled.set_propagate_natural_width(True)
         scrolled.set_propagate_natural_height(True)
-        scrolled.set_margin_start(self.textview.get_left_margin())
-        scrolled.set_margin_end(self.textview.get_right_margin())
-        scrolled.set_margin_top(self.textview.get_top_margin())
-        scrolled.set_margin_bottom(self.textview.get_bottom_margin())
+        scrolled.set_margin_start(textview.get_left_margin())
+        scrolled.set_margin_end(textview.get_right_margin())
+        scrolled.set_margin_top(textview.get_top_margin())
+        scrolled.set_margin_bottom(textview.get_bottom_margin())
         scrolled.set_min_content_height(desired_height)
         scrolled.set_size_request(-1, desired_height)
         scrolled.set_hexpand(True)
         scrolled.set_halign(Gtk.Align.FILL)
-        textview_width = self.textview.get_allocated_width()
+        textview_width = textview.get_allocated_width()
         min_width = textview_width if textview_width > 0 else 600
         scrolled.set_min_content_width(min_width)
         scrolled.add(source_view)
         scrolled.show_all()
 
-        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
-        anchor = self.textbuffer.create_child_anchor(self.textbuffer.get_end_iter())
-        self.textview.add_child_at_anchor(scrolled, anchor)
-        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+        target_buffer.insert(target_buffer.get_end_iter(), "\n")
+        anchor = target_buffer.create_child_anchor(target_buffer.get_end_iter())
+        textview.add_child_at_anchor(scrolled, anchor)
+        target_buffer.insert(target_buffer.get_end_iter(), "\n")
 
     def _insert_inline_markup(
         self,
@@ -978,7 +1038,9 @@ class ChatWindow(Gtk.ApplicationWindow):
         buffer: Optional[Gtk.TextBuffer] = None,
         base_tags: Optional[List[str]] = None,
     ) -> None:
-        target_buffer = buffer or self.textbuffer
+        target_buffer = buffer or self._active_buffer
+        if not target_buffer:
+            return
         text = self._strip_emphasis_from_math(text)
         emphasis_pattern = re.compile(r"\*\*(.+?)\*\*|\*(.+?)\*")
         position = 0
@@ -1007,7 +1069,9 @@ class ChatWindow(Gtk.ApplicationWindow):
         tags: List[str],
         buffer: Optional[Gtk.TextBuffer] = None,
     ) -> None:
-        target_buffer = buffer or self.textbuffer
+        target_buffer = buffer or self._active_buffer
+        if not target_buffer:
+            return
         pattern = re.compile(r"(\${1,2})(.+?)\1")
         position = 0
         for match in pattern.finditer(text):
@@ -1037,7 +1101,9 @@ class ChatWindow(Gtk.ApplicationWindow):
         block: bool,
         buffer: Optional[Gtk.TextBuffer] = None,
     ) -> bool:
-        target_buffer = buffer or self.textbuffer
+        target_buffer = buffer or self._active_buffer
+        if not target_buffer:
+            return False
         pixbuf = self._render_latex_pixbuf(formula)
         if not pixbuf:
             return False
@@ -1142,6 +1208,8 @@ class ChatWindow(Gtk.ApplicationWindow):
         rows: List[List[str]],
         aligns: List[str],
         message_tag: str,
+        buffer: Gtk.TextBuffer,
+        textview: Gtk.TextView,
     ) -> None:
         grid = Gtk.Grid()
         grid.set_row_spacing(4)
@@ -1154,7 +1222,7 @@ class ChatWindow(Gtk.ApplicationWindow):
         grid.set_hexpand(True)
         grid.set_vexpand(False)
 
-        textview_width = self.textview.get_allocated_width()
+        textview_width = textview.get_allocated_width()
         table_width = max(250, (textview_width - 40) if textview_width > 0 else 700)
         column_count = max(len(row) for row in rows)
         column_width = max(80, (table_width - (grid.get_column_spacing() * (column_count - 1))) // max(1, column_count))
@@ -1185,23 +1253,23 @@ class ChatWindow(Gtk.ApplicationWindow):
         frame.add(grid)
         frame.show_all()
 
-        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
-        anchor = self.textbuffer.create_child_anchor(self.textbuffer.get_end_iter())
-        self.textview.add_child_at_anchor(frame, anchor)
-        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+        buffer.insert(buffer.get_end_iter(), "\n")
+        anchor = buffer.create_child_anchor(buffer.get_end_iter())
+        textview.add_child_at_anchor(frame, anchor)
+        buffer.insert(buffer.get_end_iter(), "\n")
 
-    def _insert_horizontal_rule(self) -> None:
-        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+    def _insert_horizontal_rule(self, buffer: Gtk.TextBuffer, textview: Gtk.TextView) -> None:
+        buffer.insert(buffer.get_end_iter(), "\n")
 
-        available_width = self.textview.get_allocated_width()
+        available_width = textview.get_allocated_width()
         if available_width <= 0:
             available_width = max(400, self.get_allocated_width() - 60)
         width = max(80, available_width - 24)
 
         pixbuf = self._create_horizontal_rule_pixbuf(width, 1)
         if pixbuf:
-            self.textbuffer.insert_pixbuf(self.textbuffer.get_end_iter(), pixbuf)
-        self.textbuffer.insert(self.textbuffer.get_end_iter(), "\n")
+            buffer.insert_pixbuf(buffer.get_end_iter(), pixbuf)
+        buffer.insert(buffer.get_end_iter(), "\n")
 
     def _create_table_cell_view(
         self,
@@ -1438,7 +1506,8 @@ class ChatWindow(Gtk.ApplicationWindow):
         if self.store.conversations:
             self._select_conversation(self.store.conversations[0])
         else:
-            self.textbuffer.set_text("")
+            for child in list(self.message_list.get_children()):
+                self.message_list.remove(child)
 
     def on_conversation_selected(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
         if not row:
