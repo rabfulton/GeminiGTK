@@ -1,5 +1,5 @@
 # GeminiGTK
-
+**I have now implemented Gemini support in ChatGTK please use that instead: [ChatGTK](https://github.com/rabfulton/ChatGTK)**   
 Native GTK+ 3 desktop client for exploring Gemini and Nano Banana models.
 
 ## Features
